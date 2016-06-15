@@ -2,13 +2,28 @@ from __future__ import with_statement
 
 import sys
 
+from rpython.rlib import jit
 from llvm_wrapper import *
+
+def target(*args):
+    return main, None
+
+def jitpolicy(driver):
+    from rpython.jit.codewriter.policy import JitPolicy
+    return JitPolicy()
+
+jit_driver = jit.JitDriver (
+    greens = [],
+    reds = []
+)
 
 def main(args):
     if len(args) < 2:
         print"[ERROR]: Need an argument:\nUsage: ./llvmtest name.bc\n"
         return 1
+
     module = LLVMModuleCreateWithName("module_test")
+
     with lltype.scoped_alloc(rffi.CCHARPP.TO, 1) as out_message:
         mem_buff = lltype.malloc(rffi.VOIDP.TO, 1, flavor="raw")
         with lltype.scoped_alloc(rffi.VOIDPP.TO, 1) as mem_buff_ptr:
@@ -40,9 +55,9 @@ def main(args):
 
     block = LLVMGetFirstBasicBlock(main_fun)
 
-    while lltype.normalizeptr(block) is not None:
+    while block:
         instruction = LLVMGetFirstInstruction(block)
-        while lltype.normalizeptr(instruction) is not None:
+        while instruction:
             operands = LLVMGetNumOperands(instruction)
             opcode = LLVMGetInstructionOpcode(instruction)
             print "\t%d has operands:\n" % opcode
