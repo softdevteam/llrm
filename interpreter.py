@@ -4,6 +4,8 @@ import sys
 
 from rpython.rlib import jit
 from llvm_wrapper import *
+from state import State
+from operation import Operation
 
 def target(*args):
     return main, None
@@ -17,40 +19,24 @@ jit_driver = jit.JitDriver (
     reds = []
 )
 
-def LLVMShl_op(operand_list = []):
-    print "shift left", operand_list
-
-def LLVMOr_op(operand_list = []):
-    print "or", operand_list
-
-def LLVMAdd_op(operand_list = []):
-    print "add", operand_list
-
-def LLVMMul_op(operand_list = []):
-    print "mult", operand_list
-
-def LLVMRet_op(operand_list = []):
-    print "return", operand_list
-
-def LLVMCall_op(operand_list = []):
-    print "Call", operand_list
-
-def LLVMAlloca_op(operand_list = []):
-    print "Alloca", operand_list
-
-def LLVMStore_op(operand_list = []):
-    print "store", operand_list
-
-def LLVMLoad_op(operand_list = []):
-    print "loading", operand_list
-
-class UnknownOpcodeException(Exception):
-    pass
+# XXX not yet implemented
+class Interpreter(object):
+    def __init__(self):
+        stack = []
+        global_state = State()
 
 def main(args):
     if len(args) < 2:
         print"[ERROR]: Need an argument:\nUsage: ./llvmtest name.bc\n"
         return 1
+
+    # argc and argv of the C program
+    c_argc = 0
+    c_argv = []
+    if len(args) > 2:
+        c_argc = int(args[2])
+        if c_argc > 0:
+            c_argv = args[3:]
 
     module = LLVMModuleCreateWithName("module_test")
 
@@ -78,44 +64,27 @@ def main(args):
         LLVMGetBasicBlocks(main_fun, basic_blocks_main_ptr)
         basic_blocks_main = basic_blocks_main_ptr[0]
 
-    block = LLVMGetFirstBasicBlock(main_fun)
+    interp = Interpreter()
+    # stack frame for main
+    frame = State()
 
+    block = LLVMGetFirstBasicBlock(main_fun)
     while block:
         instruction = LLVMGetFirstInstruction(block)
         while instruction:
-            operands = LLVMGetNumOperands(instruction)
             opcode = LLVMGetInstructionOpcode(instruction)
 
-            #if opcode not in range(1, 66):
-            #    raise UnknownOpcodeException(opcode)
+            operand_list = [LLVMGetOperand(instruction, i) \
+                            for i in range(0,  LLVMGetNumOperands(instruction))]
 
-            operand_list = []
-            for i in range(0, operands):
-                operand = LLVMPrintValueToString(LLVMGetOperand(instruction, i))
-                operand_list.append(rffi.charp2str(operand))
+            operation = Operation(opcode, operand_list)
+            value = operation.execute(frame)
+            frame.set_variable(rffi.cast(rffi.INT, instruction), value)
 
-            if opcode == LLVMRet:
-                LLVMRet_op(operand_list)
-            elif opcode == LLVMAdd:
-                LLVMAdd_op(operand_list)
-            elif opcode == LLVMMul:
-                LLVMMul_op(operand_list)
-            elif opcode == LLVMCall:
-                LLVMCall_op(operand_list)
-            elif opcode == LLVMAlloca:
-                LLVMAlloca_op(operand_list)
-            elif opcode == LLVMStore:
-                LLVMStore_op(operand_list)
-            elif opcode == LLVMOr:
-                LLVMOr_op(operand_list)
-            elif opcode == LLVMLoad:
-                LLVMLoad_op(operand_list)
-            else:
-                raise UnknownOpcodeException(opcode)
             instruction = LLVMGetNextInstruction(instruction)
-            print "\n"
 
         block = LLVMGetNextBasicBlock(block)
+    print frame.vars, frame.var_offsets.items()
     return 0
 
 if __name__ == '__main__':
