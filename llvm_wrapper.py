@@ -4,8 +4,6 @@ from rpython.rtyper.lltypesystem import rffi, lltype
 from rpython.rtyper.tool import rffi_platform
 from rpython.translator.tool.cbuild import ExternalCompilationInfo
 
-import string
-
 class CConfig(object):
 
     _includes = "llvm-c/Core.h llvm-c/BitReader.h"
@@ -119,7 +117,6 @@ LLVMPrintValueToString = rffi.llexternal("LLVMPrintValueToString",
                                           rffi.CCHARP,
                                           compilation_info=CConfig._compilation_info_)
 
-# LLVMBool LLVMCreateMemoryBufferWithContentsOfFile(const char *Path, LLVMMemoryBufferRef *OutMemBuf, char **OutMessage)
 LLVMCreateMemoryBufferWithContentsOfFile = rffi.llexternal("LLVMCreateMemoryBufferWithContentsOfFile",
                                                             [rffi.CCHARP, rffi.VOIDPP, rffi.CCHARPP],
                                                             rffi.INT,
@@ -130,13 +127,11 @@ LLVMParseBitcode = rffi.llexternal("LLVMParseBitcode",
                                     rffi.INT,
                                     compilation_info=CConfig._compilation_info_)
 
-# LLVMValueRef LLVMGetNamedFunction(LLVMModuleRef M, const char *Name)
 LLVMGetNamedFunction = rffi.llexternal("LLVMGetNamedFunction",
                                        [rffi.VOIDP, rffi.CCHARP],
                                         rffi.VOIDP,
                                         compilation_info=CConfig._compilation_info_)
 
-# void LLVMGetBasicBlocks(LLVMValueRef Fn, LLVMBasicBlockRef *BasicBlocks)
 LLVMGetBasicBlocks = rffi.llexternal("LLVMGetBasicBlocks",
                                      [rffi.VOIDP, rffi.VOIDPP],
                                       lltype.Void,
@@ -147,13 +142,11 @@ LLVMGetValueName = rffi.llexternal("LLVMGetValueName",
                                     rffi.CCHARP,
                                     compilation_info=CConfig._compilation_info_)
 
-# LLVMBasicBlockRef LLVMGetFirstBasicBlock(LLVMValueRef Fn)
 LLVMGetFirstBasicBlock = rffi.llexternal("LLVMGetFirstBasicBlock",
                                          [rffi.VOIDP],
                                           rffi.VOIDP,
                                           compilation_info=CConfig._compilation_info_)
 
-# LLVMBasicBlockRef LLVMGetNextBasicBlock(LLVMBasicBlockRef BB)
 LLVMGetNextBasicBlock = rffi.llexternal("LLVMGetNextBasicBlock",
                                         [rffi.VOIDP],
                                          rffi.VOIDP,
@@ -183,6 +176,21 @@ LLVMGetOperand = rffi.llexternal("LLVMGetOperand",
                                  [rffi.VOIDP, lltype.Unsigned],
                                   rffi.VOIDP,
                                   compilation_info=CConfig._compilation_info_)
+
+LLVMIsConstant = rffi.llexternal("LLVMIsConstant",
+                                 [rffi.VOIDP],
+                                  rffi.INT,
+                                  compilation_info=CConfig._compilation_info_)
+
+LLVMConstIntGetSExtValue = rffi.llexternal("LLVMConstIntGetSExtValue",
+                                           [rffi.VOIDP],
+                                            rffi.INT,
+                                            compilation_info=CConfig._compilation_info_)
+
+LLVMConstIntGetZExtValue = rffi.llexternal("LLVMConstIntGetZExtValue",
+                                           [rffi.VOIDP],
+                                            rffi.INT,
+                                            compilation_info=CConfig._compilation_info_)
 
 def getReference():
     return lltype.malloc(rffi.VOIDP.TO, 1, flavor="raw")
