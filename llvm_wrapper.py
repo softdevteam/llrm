@@ -192,8 +192,10 @@ LLVMConstIntGetZExtValue = rffi.llexternal("LLVMConstIntGetZExtValue",
                                             rffi.INT,
                                             compilation_info=CConfig._compilation_info_)
 
+LLVMGetValueName = rffi.llexternal("LLVMGetValueName",
+                                   [rffi.VOIDP],
+                                    rffi.CCHARP,
+                                    compilation_info=CConfig._compilation_info_)
+
 def getReference():
     return lltype.malloc(rffi.VOIDP.TO, 1, flavor="raw")
-
-
-
