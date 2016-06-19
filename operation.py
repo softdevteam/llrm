@@ -46,7 +46,11 @@ class Operation(object):
             x, y = self._get_args(state)
             return x * y
         elif self.opcode == LLVMCall:
-            pass
+            # XXX deal with function calls and branching
+            print "*" * 20, rffi.charp2str(LLVMGetValueName(self.args[0])), \
+                            rffi.charp2str(LLVMGetValueName(self.args[1])), \
+                            rffi.charp2str(LLVMGetValueName(self.args[2]))
+            #block = LLVMGetFirstBasicBlock(self.args[2])
         elif self.opcode == LLVMAlloca:
             pass
         elif self.opcode == LLVMStore:
