@@ -19,24 +19,37 @@ jit_driver = jit.JitDriver (
     reds = []
 )
 
-# XXX not yet implemented
 class Interpreter(object):
     def __init__(self):
-        stack = []
-        global_state = State()
+        self.stack = []
+        self.global_state = State()
+        self.pc = 0
+
+    def run(self, main_fun):
+        frame = State()
+
+        block = LLVMGetFirstBasicBlock(main_fun)
+        while block:
+            instruction = LLVMGetFirstInstruction(block)
+            while instruction:
+                opcode = LLVMGetInstructionOpcode(instruction)
+
+                operand_list = [LLVMGetOperand(instruction, i) \
+                                for i in range(0,  LLVMGetNumOperands(instruction))]
+
+                operation = Operation(opcode, operand_list)
+                value = operation.execute(frame)
+                frame.set_variable(rffi.cast(rffi.INT, instruction), value)
+
+                instruction = LLVMGetNextInstruction(instruction)
+
+            block = LLVMGetNextBasicBlock(block)
+        print frame.vars, frame.var_offsets.items()
 
 def main(args):
     if len(args) < 2:
         print"[ERROR]: Need an argument:\nUsage: ./llvmtest name.bc\n"
         return 1
-
-    # argc and argv of the C program
-    c_argc = 0
-    c_argv = []
-    if len(args) > 2:
-        c_argc = int(args[2])
-        if c_argc > 0:
-            c_argv = args[3:]
 
     module = LLVMModuleCreateWithName("module_test")
 
@@ -65,26 +78,7 @@ def main(args):
         basic_blocks_main = basic_blocks_main_ptr[0]
 
     interp = Interpreter()
-    # stack frame for main
-    frame = State()
-
-    block = LLVMGetFirstBasicBlock(main_fun)
-    while block:
-        instruction = LLVMGetFirstInstruction(block)
-        while instruction:
-            opcode = LLVMGetInstructionOpcode(instruction)
-
-            operand_list = [LLVMGetOperand(instruction, i) \
-                            for i in range(0,  LLVMGetNumOperands(instruction))]
-
-            operation = Operation(opcode, operand_list)
-            value = operation.execute(frame)
-            frame.set_variable(rffi.cast(rffi.INT, instruction), value)
-
-            instruction = LLVMGetNextInstruction(instruction)
-
-        block = LLVMGetNextBasicBlock(block)
-    print frame.vars, frame.var_offsets.items()
+    interp.run(main_fun)
     return 0
 
 if __name__ == '__main__':
