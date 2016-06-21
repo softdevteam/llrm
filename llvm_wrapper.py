@@ -228,5 +228,15 @@ LLVMGetAsString = rffi.llexternal("LLVMGetAsString",
                                    rffi.CCHARP,
                                    compilation_info=CConfig._compilation_info_)
 
+LLVMGetParam = rffi.llexternal("LLVMGetParam",
+                               [rffi.VOIDP, rffi.INT],
+                                rffi.VOIDP,
+                                compilation_info=CConfig._compilation_info_)
+
+LLVMCountParams = rffi.llexternal("LLVMCountParams",
+                                  [rffi.VOIDP],
+                                   rffi.INT,
+                                   compilation_info=CConfig._compilation_info_)
+
 def getReference():
     return lltype.malloc(rffi.VOIDP.TO, 1, flavor="raw")
