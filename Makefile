@@ -8,7 +8,7 @@ LDFLAGS := $(shell llvm-config --cxxflags --ldflags --libs core native --system-
 all: test.bc llvmtest
 
 test.bc: test.c
-	$(CLANG_CC) -emit-llvm test.c -c -o test.bc
+	$(CLANG_CC) -emit-llvm test.c -c -O2 -o test.bc
 
 llvmtest: llvmtest.o
 	$(CC) $< $(LDFLAGS) -o $@
