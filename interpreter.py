@@ -5,7 +5,6 @@ import sys
 from rpython.rlib import jit
 from llvm_wrapper import *
 from state import State
-from operation import Operation
 
 def target(*args):
     return main, None
