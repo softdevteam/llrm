@@ -197,5 +197,36 @@ LLVMGetValueName = rffi.llexternal("LLVMGetValueName",
                                     rffi.CCHARP,
                                     compilation_info=CConfig._compilation_info_)
 
+LLVMGetFirstGlobal = rffi.llexternal("LLVMGetFirstGlobal",
+                                     [rffi.VOIDP],
+                                      rffi.VOIDP,
+                                      compilation_info=CConfig._compilation_info_)
+
+LLVMGetNextGlobal = rffi.llexternal("LLVMGetNextGlobal",
+                                     [rffi.VOIDP],
+                                      rffi.VOIDP,
+                                      compilation_info=CConfig._compilation_info_)
+
+LLVMGetInitializer = rffi.llexternal("LLVMGetInitializer",
+                                     [rffi.VOIDP],
+                                      rffi.VOIDP,
+                                      compilation_info=CConfig._compilation_info_)
+
+LLVMIsGlobalConstant = rffi.llexternal("LLVMIsGlobalConstant",
+                                       [rffi.VOIDP],
+                                        rffi.INT,
+                                        compilation_info=CConfig._compilation_info_)
+
+
+LLVMIsConstantString = rffi.llexternal("LLVMIsConstantString",
+                                       [rffi.VOIDP],
+                                        rffi.INT,
+                                        compilation_info=CConfig._compilation_info_)
+
+LLVMGetAsString = rffi.llexternal("LLVMGetAsString",
+                                  [rffi.VOIDP, rffi.INTP],
+                                   rffi.CCHARP,
+                                   compilation_info=CConfig._compilation_info_)
+
 def getReference():
     return lltype.malloc(rffi.VOIDP.TO, 1, flavor="raw")

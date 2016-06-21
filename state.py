@@ -26,3 +26,9 @@ class State(object):
         off = self.get_variable_off(name)
         self.vars[off] = val
 
+    def has_key(self, name):
+        ''' Checks if a given key exists in the dictionary. '''
+        off = self.var_offsets.get(name, -1)
+        if off == -1:
+            return False
+        return True
