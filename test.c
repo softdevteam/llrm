@@ -1,7 +1,6 @@
 #include <stdio.h>
 
-int
-main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
     int a = 20;
     int b = 13;
