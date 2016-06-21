@@ -17,6 +17,22 @@ jit_driver = jit.JitDriver (
     greens = [],
     reds = [])
 
+class NoSuchVariableException(Exception):
+    pass
+
+def lookup_var(local_vars, global_vars, var):
+    ''' Returns the value of a variable. First checks locals, then globals'''
+
+    if local_vars.has_key(rffi.cast(rffi.INT, var)):
+        return local_vars.get_variable(rffi.cast(rffi.INT, var))
+    elif global_vars.has_key(rffi.cast(rffi.INT, var)):
+        return global_vars.get_variable(rffi.cast(rffi.INT, var))
+    elif LLVMIsConstant(var):
+        return LLVMConstIntGetSExtValue(var)
+    else:
+        print "[ERROR]: Unknown variable. Exiting."
+        raise NoSuchVariableException(rffi.charp2str(LLVMPrintValueToString(var)))
+
 class Interpreter(object):
 
     def __init__(self, global_state = None):
@@ -28,15 +44,12 @@ class Interpreter(object):
 
         arg_vals = []
         for arg in args:
-            if LLVMIsConstant(arg):
-                arg_vals.append(LLVMConstIntGetSExtValue(arg))
-            elif state.has_key(rffi.cast(rffi.INT, arg)):
-                arg_vals.append(state.get_variable(rffi.cast(rffi.INT, arg)))
-            elif self.global_state.has_key(rffi.cast(rffi.INT, arg)):
-                arg_vals.append(self.global_state.get_variable(rffi.cast(rffi.INT, arg)))
-            else:
-                print "error"
+            arg_vals.append(lookup_var(state, self.global_state, arg))
         return arg_vals
+
+    def exit_not_implemented(self, name):
+        print "[ERROR]: Found unimplemented operation. Exiting."
+        raise NotImplementedError(name)
 
     def exec_operation(self, state, opcode, args=[]):
         if opcode == LLVMRet:
@@ -49,39 +62,23 @@ class Interpreter(object):
             return x * y
         elif opcode == LLVMCall:
             string_format_ref = LLVMGetOperand(args[0], 0)
-            string_format = None
-            # need to access @.str value
-            if state.has_key(rffi.cast(rffi.INT, string_format_ref)):
-                string_format = state.get_variable(rffi.cast(rffi.INT, string_format_ref))
-            elif self.global_state.has_key(rffi.cast(rffi.INT, string_format_ref)):
-                string_format = self.global_state.get_variable(rffi.cast(rffi.INT, string_format_ref))
-            else:
-                print "error"
+            string_format = lookup_var(state, self.global_state, string_format_ref)
             fn_name = rffi.charp2str(LLVMGetValueName(args[-1]))
             if fn_name == "printf":
                 # XXX assumes all printf arguments are integers
                 printf_args = []
                 for arg in args[1:-1]:
-                    if state.has_key(rffi.cast(rffi.INT, arg)):
-                        printf_args.append(state.get_variable(rffi.cast(rffi.INT, arg)))
-                    elif self.global_state.has_key(rffi.cast(rffi.INT, arg)):
-                        printf_args.append(self.global_state.get_variable(rffi.cast(rffi.INT, arg)))
-                    elif LLVMIsConstant(arg):
-                        printf_args.append(LLVMConstIntGetSExtValue(arg))
-                    else:
-                        # raise custom exception
-                        print "error"
+                    printf_args.append(lookup_var(state, self.global_state, arg))
                 print string_format % tuple(printf_args)
             else:
-                raise NotImplementedError(fn_name)
+                exit_not_implemented(fn_name)
         elif opcode == LLVMAlloca:
-            pass
+            self.exit_not_implemented("LLVMAlloca")
         elif opcode == LLVMStore:
-            pass
+            self.exit_not_implemented("LLVMStore")
 
     def run(self, function):
         frame = State()
-
         block = LLVMGetFirstBasicBlock(function)
         while block:
             instruction = LLVMGetFirstInstruction(block)
@@ -97,7 +94,7 @@ class Interpreter(object):
                 instruction = LLVMGetNextInstruction(instruction)
 
             block = LLVMGetNextBasicBlock(block)
-        print "Done.\n[INFO]", frame.vars, frame.var_offsets.items()
+        print "Done.\n[INFO]:", frame.vars, frame.var_offsets.items()
 
 def main(args):
     if len(args) < 2:
@@ -136,12 +133,15 @@ def main(args):
     global_state = State()
     global_var = LLVMGetFirstGlobal(module)
 
-    # assuming all global_vars are strings
     while global_var:
         with lltype.scoped_alloc(rffi.INTP.TO, 1) as int_ptr:
-            string_var = LLVMGetAsString(LLVMGetInitializer(global_var), int_ptr)
-            global_state.set_variable(rffi.cast(rffi.INT, global_var), rffi.charp2str(string_var))
-
+            initializer = LLVMGetInitializer(global_var)
+            if LLVMIsConstantString(initializer):
+                string_var = LLVMGetAsString(initializer, int_ptr)
+                global_state.set_variable(rffi.cast(rffi.INT, global_var), rffi.charp2str(string_var))
+            else:
+                print "[ERROR]: Found a non-string global variable."
+                raise TypeError(rffi.charp2str(LLVMPrintValueToString(initializer)))
         global_var = LLVMGetNextGlobal(global_var)
 
     # setting argc and argv of the C program

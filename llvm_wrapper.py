@@ -5,7 +5,6 @@ from rpython.rtyper.tool import rffi_platform
 from rpython.translator.tool.cbuild import ExternalCompilationInfo
 
 class CConfig(object):
-
     _includes = "llvm-c/Core.h llvm-c/BitReader.h"
     libs = Popen("llvm-config --libs core native --system-libs",
                   shell=True, stdout=PIPE, stderr=PIPE).communicate()[0].split()
