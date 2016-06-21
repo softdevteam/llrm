@@ -16,21 +16,14 @@ def jitpolicy(driver):
 
 jit_driver = jit.JitDriver (
     greens = [],
-    reds = []
-)
+    reds = [])
 
 class Interpreter(object):
 
-    not_set = True
-
     def __init__(self, global_state = None):
-        self.stack = []
-        self.pc = 0
         self.global_state = global_state
 
     # only works for integers
-    # XXX if a value is not local (not in state) need to check
-    # in global_state
     def _get_args(self, args, state):
         ''' Returns a list of arguments represented as integers '''
 
@@ -38,12 +31,12 @@ class Interpreter(object):
         for arg in args:
             if LLVMIsConstant(arg):
                 arg_vals.append(LLVMConstIntGetSExtValue(arg))
-            else:
-                # XXX temporary dummy value for argc is 3
-                if Interpreter.not_set and "argc" in rffi.charp2str(LLVMPrintValueToString(arg)):
-                    state.set_variable(rffi.cast(rffi.INT, arg), 3)
-                    Interpreter.not_set = False
+            elif state.has_key(rffi.cast(rffi.INT, arg)):
                 arg_vals.append(state.get_variable(rffi.cast(rffi.INT, arg)))
+            elif self.global_state.has_key(rffi.cast(rffi.INT, arg)):
+                arg_vals.append(self.global_state.get_variable(rffi.cast(rffi.INT, arg)))
+            else:
+                print "error"
         return arg_vals
 
     def exec_operation(self, state, opcode, args=[]):
@@ -68,8 +61,17 @@ class Interpreter(object):
             fn_name = rffi.charp2str(LLVMGetValueName(args[-1]))
             if fn_name == "printf":
                 # XXX assumes all printf arguments are integers
-                printf_args = [state.get_variable(rffi.cast(rffi.INT, arg)) \
-                                for arg in args[1:-1] ]
+                printf_args = []
+                for arg in args[1:-1]:
+                    if state.has_key(rffi.cast(rffi.INT, arg)):
+                        printf_args.append(state.get_variable(rffi.cast(rffi.INT, arg)))
+                    elif self.global_state.has_key(rffi.cast(rffi.INT, arg)):
+                        printf_args.append(self.global_state.get_variable(rffi.cast(rffi.INT, arg)))
+                    elif LLVMIsConstant(arg):
+                        printf_args.append(LLVMConstIntGetSExtValue(arg))
+                    else:
+                        # raise custom exception
+                        print "error"
                 print string_format % tuple(printf_args)
             else:
                 raise NotImplementedError(fn_name)
@@ -78,10 +80,10 @@ class Interpreter(object):
         elif opcode == LLVMStore:
             pass
 
-    def run(self, main_fun):
+    def run(self, function):
         frame = State()
 
-        block = LLVMGetFirstBasicBlock(main_fun)
+        block = LLVMGetFirstBasicBlock(function)
         while block:
             instruction = LLVMGetFirstInstruction(block)
             while instruction:
@@ -100,8 +102,11 @@ class Interpreter(object):
 
 def main(args):
     if len(args) < 2:
-        print"[ERROR]: Need an argument:\nUsage: ./llvmtest name.bc\n"
+        print"[ERROR]: Need an argument:\nUsage: ./llvmtest name.bc [C args]\n"
         return 1
+
+    main_argc = len(args) - 2
+    main_argv = args[2:]
 
     module = LLVMModuleCreateWithName("module_test")
 
@@ -129,9 +134,7 @@ def main(args):
         LLVMGetBasicBlocks(main_fun, basic_blocks_main_ptr)
         basic_blocks_main = basic_blocks_main_ptr[0]
 
-
     global_state = State()
-
     global_var = LLVMGetFirstGlobal(module)
 
     # assuming all global_vars are strings
@@ -141,6 +144,18 @@ def main(args):
             global_state.set_variable(rffi.cast(rffi.INT, global_var), rffi.charp2str(string_var))
 
         global_var = LLVMGetNextGlobal(global_var)
+
+    # setting argc and argv of the C program
+    # warning: argc and argv are currently accessible
+    # anywhere in the program - they are global vars
+    for index in range(0, LLVMCountParams(main_fun)):
+        param = LLVMGetParam(main_fun, index)
+        if index == 0:
+            # set argc
+            global_state.set_variable(rffi.cast(rffi.INT, param), main_argc)
+        else:
+            # set argv
+            global_state.set_variable(rffi.cast(rffi.INT, param), main_argv)
 
     interp = Interpreter(global_state)
     interp.run(main_fun)
