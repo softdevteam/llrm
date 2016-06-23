@@ -5,6 +5,7 @@ import sys
 from rpython.rlib import jit
 from llvm_wrapper import *
 from state import State
+from type_wrapper import *
 
 def target(*args):
     return main, None
@@ -13,9 +14,7 @@ def jitpolicy(driver):
     from rpython.jit.codewriter.policy import JitPolicy
     return JitPolicy()
 
-jit_driver = jit.JitDriver (
-    greens = [],
-    reds = [])
+jit_driver = jit.JitDriver(greens=[], reds=[])
 
 class NoSuchVariableException(Exception):
     pass
@@ -28,10 +27,11 @@ def lookup_var(local_vars, global_vars, var):
     elif global_vars.has_key(rffi.cast(rffi.INT, var)):
         return global_vars.get_variable(rffi.cast(rffi.INT, var))
     elif LLVMIsConstant(var):
-        return LLVMConstIntGetSExtValue(var)
+        return Integer(LLVMConstIntGetSExtValue(var))
     else:
         print "[ERROR]: Unknown variable. Exiting."
         raise NoSuchVariableException(rffi.charp2str(LLVMPrintValueToString(var)))
+    return Type()
 
 class Interpreter(object):
 
@@ -56,26 +56,37 @@ class Interpreter(object):
             return 0
         elif opcode == LLVMAdd:
             x, y = self._get_args(args, state)
-            return x + y
+            assert isinstance(x, Integer) and isinstance(y, Integer)
+            return x.value + y.value
         elif opcode == LLVMMul:
             x, y = self._get_args(args, state)
-            return x * y
+            assert isinstance(x, Integer) and isinstance(y, Integer)
+            return x.value * y.value
         elif opcode == LLVMCall:
+            # TODO implement function calls
             string_format_ref = LLVMGetOperand(args[0], 0)
-            string_format = lookup_var(state, self.global_state, string_format_ref)
+            str_var = lookup_var(state, self.global_state, string_format_ref)
+            assert isinstance(str_var, String)
+            string_format = str_var.value
             fn_name = rffi.charp2str(LLVMGetValueName(args[-1]))
             if fn_name == "printf":
                 # XXX assumes all printf arguments are integers
                 printf_args = []
-                for arg in args[1:-1]:
-                    printf_args.append(lookup_var(state, self.global_state, arg))
-                print string_format % tuple(printf_args)
+                for i in range(1, len(args) - 1):
+                    arg = args[i]
+                    var = lookup_var(state, self.global_state, arg)
+                    assert isinstance(var, Integer)
+                    printf_args.append(var.value)
+                print string_format, printf_args
+            elif fn_name == "puts":
+                print string_format
             else:
-                exit_not_implemented(fn_name)
+                self.exit_not_implemented(fn_name)
         elif opcode == LLVMAlloca:
             self.exit_not_implemented("LLVMAlloca")
         elif opcode == LLVMStore:
             self.exit_not_implemented("LLVMStore")
+        return 0
 
     def run(self, function):
         frame = State()
@@ -85,24 +96,19 @@ class Interpreter(object):
             while instruction:
                 opcode = LLVMGetInstructionOpcode(instruction)
 
-                operand_list = [LLVMGetOperand(instruction, i) \
+                operand_list = [LLVMGetOperand(instruction, i)\
                                 for i in range(0,  LLVMGetNumOperands(instruction))]
 
                 value = self.exec_operation(frame, opcode, operand_list)
-                frame.set_variable(rffi.cast(rffi.INT, instruction), value)
-
+                frame.set_variable(rffi.cast(rffi.INT, instruction),\
+                                   Integer(value))
                 instruction = LLVMGetNextInstruction(instruction)
-
             block = LLVMGetNextBasicBlock(block)
-        print "Done.\n[INFO]:", frame.vars, frame.var_offsets.items()
 
 def main(args):
     if len(args) < 2:
         print"[ERROR]: Need an argument:\nUsage: ./llvmtest name.bc [C args]\n"
         return 1
-
-    main_argc = len(args) - 2
-    main_argv = args[2:]
 
     module = LLVMModuleCreateWithName("module_test")
 
@@ -138,11 +144,15 @@ def main(args):
             initializer = LLVMGetInitializer(global_var)
             if LLVMIsConstantString(initializer):
                 string_var = LLVMGetAsString(initializer, int_ptr)
-                global_state.set_variable(rffi.cast(rffi.INT, global_var), rffi.charp2str(string_var))
+                global_state.set_variable(rffi.cast(rffi.INT, global_var),\
+                                          String(rffi.charp2str(string_var)))
             else:
                 print "[ERROR]: Found a non-string global variable."
                 raise TypeError(rffi.charp2str(LLVMPrintValueToString(initializer)))
         global_var = LLVMGetNextGlobal(global_var)
+
+    main_argc = len(args) - 2
+    main_argv = args[2:]
 
     # setting argc and argv of the C program
     # warning: argc and argv are currently accessible
@@ -150,12 +160,11 @@ def main(args):
     for index in range(0, LLVMCountParams(main_fun)):
         param = LLVMGetParam(main_fun, index)
         if index == 0:
-            # set argc
-            global_state.set_variable(rffi.cast(rffi.INT, param), main_argc)
+            global_state.set_variable(rffi.cast(rffi.INT, param),\
+                                                Integer(main_argc))
         else:
-            # set argv
-            global_state.set_variable(rffi.cast(rffi.INT, param), main_argv)
-
+            global_state.set_variable(rffi.cast(rffi.INT, param),\
+                                                List(main_argv))
     interp = Interpreter(global_state)
     interp.run(main_fun)
     return 0
