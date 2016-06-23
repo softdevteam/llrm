@@ -1,13 +1,17 @@
-
 class Type(object):
-    def __init__(self):
-        self.value = None
+    pass
 
-class Integer(Type):
+class NumericType(Type):
+    pass
+
+class CompositeType(Type):
+    pass
+
+class Float(NumericType):
     def __init__(self, value):
         self.value = value
 
-class Float(Type):
+class Integer(Float):
     def __init__(self, value):
         self.value = value
 
@@ -16,11 +20,11 @@ class String(Type):
         self.value = value
 
 # should contain wrapper types
-class List(Type):
+class List(CompositeType):
     def __init__(self, value):
         self.value = value
 
-class Tuple(Type):
+class Tuple(CompositeType):
     def __init__(self, value):
         self.value = value
 

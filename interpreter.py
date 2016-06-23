@@ -19,6 +19,10 @@ jit_driver = jit.JitDriver(greens=[], reds=[])
 class NoSuchVariableException(Exception):
     pass
 
+
+class NoSuchTypeException(Exception):
+    pass
+
 def lookup_var(local_vars, global_vars, var):
     ''' Returns the value of a variable. First checks locals, then globals'''
 
@@ -27,7 +31,15 @@ def lookup_var(local_vars, global_vars, var):
     elif global_vars.has_key(rffi.cast(rffi.INT, var)):
         return global_vars.get_variable(rffi.cast(rffi.INT, var))
     elif LLVMIsConstant(var):
-        return Integer(LLVMConstIntGetSExtValue(var))
+        var_type = LLVMGetTypeKind(LLVMTypeOf(var))
+        if var_type == LLVMIntegerTypeKind:
+            return Integer(LLVMConstIntGetSExtValue(var))
+        elif var_type == LLVMDoubleTypeKind:
+            with lltype.scoped_alloc(rffi.SIGNEDP.TO, 1) as signed_ptr:
+                return Float(LLVMConstRealGetDouble(var, signed_ptr))
+        else:
+            print "[ERROR]: Unknown type. Exiting."
+            raise NoSuchTypeException(rffi.charp2str(LLVMPrintTypeToString(LLVMTypeOf(var))))
     else:
         print "[ERROR]: Unknown variable. Exiting."
         raise NoSuchVariableException(rffi.charp2str(LLVMPrintValueToString(var)))
@@ -35,7 +47,8 @@ def lookup_var(local_vars, global_vars, var):
 
 class Interpreter(object):
 
-    def __init__(self, global_state = None):
+    def __init__(self, functions, global_state = None):
+        self.functions = functions
         self.global_state = global_state
 
     # only works for integers
@@ -53,40 +66,54 @@ class Interpreter(object):
 
     def exec_operation(self, state, opcode, args=[]):
         if opcode == LLVMRet:
-            return 0
+            return Integer(0)
         elif opcode == LLVMAdd:
             x, y = self._get_args(args, state)
-            assert isinstance(x, Integer) and isinstance(y, Integer)
-            return x.value + y.value
+            assert isinstance(x, NumericType) and isinstance(y, NumericType)
+            return Integer(x.value + y.value)
         elif opcode == LLVMMul:
             x, y = self._get_args(args, state)
-            assert isinstance(x, Integer) and isinstance(y, Integer)
-            return x.value * y.value
+            assert isinstance(x, NumericType) and isinstance(y, NumericType)
+            return Integer(x.value * y.value)
+        elif opcode == LLVMSub:
+            x, y = self._get_args(args, state)
+            assert isinstance(x, NumericType) and isinstance(y, NumericType)
+            return Integer(x.value - y.value)
         elif opcode == LLVMCall:
             # TODO implement function calls
-            string_format_ref = LLVMGetOperand(args[0], 0)
-            str_var = lookup_var(state, self.global_state, string_format_ref)
-            assert isinstance(str_var, String)
-            string_format = str_var.value
-            fn_name = rffi.charp2str(LLVMGetValueName(args[-1]))
-            if fn_name == "printf":
-                # XXX assumes all printf arguments are integers
-                printf_args = []
-                for i in range(1, len(args) - 1):
-                    arg = args[i]
-                    var = lookup_var(state, self.global_state, arg)
-                    assert isinstance(var, Integer)
-                    printf_args.append(var.value)
-                print string_format, printf_args
-            elif fn_name == "puts":
-                print string_format
+
+            if rffi.cast(rffi.INT, args[-1]) in self.functions.keys():
+                print "found function", rffi.charp2str(LLVMGetValueName(args[-1]))
             else:
-                self.exit_not_implemented(fn_name)
+                print rffi.charp2str(LLVMGetValueName(args[-1]))
+                string_format_ref = LLVMGetOperand(args[0], 0)
+                str_var = lookup_var(state, self.global_state, string_format_ref)
+                assert isinstance(str_var, String)
+                string_format = str_var.value
+                fn_name = rffi.charp2str(LLVMGetValueName(args[-1]))
+                if fn_name == "printf":
+                    printf_args = []
+                    for i in range(1, len(args) - 1):
+                        arg = args[i]
+                        var = lookup_var(state, self.global_state, arg)
+                        printf_args.append(var)
+                    print string_format
+                    if len(printf_args) > 0:
+                        print "Arguments are: "
+                        for arg in printf_args:
+                            assert isinstance(arg, NumericType)
+                            print arg.value
+                        print "\n\n"
+                elif fn_name == "puts":
+                    print string_format
+                else:
+                    self.exit_not_implemented(fn_name)
         elif opcode == LLVMAlloca:
-            self.exit_not_implemented("LLVMAlloca")
-        elif opcode == LLVMStore:
             self.exit_not_implemented("LLVMStore")
-        return 0
+        elif opcode == LLVMStore:
+            # store arg[0] in arg[1]
+            self.exit_not_implemented("LLVMStore")
+        return Integer(0)
 
     def run(self, function):
         frame = State()
@@ -100,8 +127,7 @@ class Interpreter(object):
                                 for i in range(0,  LLVMGetNumOperands(instruction))]
 
                 value = self.exec_operation(frame, opcode, operand_list)
-                frame.set_variable(rffi.cast(rffi.INT, instruction),\
-                                   Integer(value))
+                frame.set_variable(rffi.cast(rffi.INT, instruction), value)
                 instruction = LLVMGetNextInstruction(instruction)
             block = LLVMGetNextBasicBlock(block)
 
@@ -165,7 +191,13 @@ def main(args):
         else:
             global_state.set_variable(rffi.cast(rffi.INT, param),\
                                                 List(main_argv))
-    interp = Interpreter(global_state)
+    functions = {}
+    function = LLVMGetFirstFunction(module)
+    while function:
+        if not LLVMIsDeclaration(function):
+            functions[rffi.cast(rffi.INT, function)] = function
+        function = LLVMGetNextFunction(function)
+    interp = Interpreter(functions, global_state)
     interp.run(main_fun)
     return 0
 
