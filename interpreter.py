@@ -19,7 +19,6 @@ jit_driver = jit.JitDriver(greens=[], reds=[])
 class NoSuchVariableException(Exception):
     pass
 
-
 class NoSuchTypeException(Exception):
     pass
 
@@ -64,6 +63,15 @@ class Interpreter(object):
         print "[ERROR]: Found unimplemented operation. Exiting."
         raise NotImplementedError(name)
 
+    def puts(self, string, args=[]):
+        print string
+        if args:
+            print "Arguments are: "
+            for arg in args:
+                assert isinstance(arg, NumericType)
+                print arg.value
+            print "\n\n"
+
     def exec_operation(self, state, opcode, args=[]):
         if opcode == LLVMRet:
             return Integer(0)
@@ -97,15 +105,9 @@ class Interpreter(object):
                         arg = args[i]
                         var = lookup_var(state, self.global_state, arg)
                         printf_args.append(var)
-                    print string_format
-                    if len(printf_args) > 0:
-                        print "Arguments are: "
-                        for arg in printf_args:
-                            assert isinstance(arg, NumericType)
-                            print arg.value
-                        print "\n\n"
+                    self.puts(string_format, printf_args)
                 elif fn_name == "puts":
-                    print string_format
+                    self.puts(string_format)
                 else:
                     self.exit_not_implemented(fn_name)
         elif opcode == LLVMAlloca:
@@ -116,7 +118,7 @@ class Interpreter(object):
         return Integer(0)
 
     def run(self, function):
-        frame = State()
+        self.frame = State()
         block = LLVMGetFirstBasicBlock(function)
         while block:
             instruction = LLVMGetFirstInstruction(block)
@@ -126,8 +128,8 @@ class Interpreter(object):
                 operand_list = [LLVMGetOperand(instruction, i)\
                                 for i in range(0,  LLVMGetNumOperands(instruction))]
 
-                value = self.exec_operation(frame, opcode, operand_list)
-                frame.set_variable(rffi.cast(rffi.INT, instruction), value)
+                value = self.exec_operation(self.frame, opcode, operand_list)
+                self.frame.set_variable(rffi.cast(rffi.INT, instruction), value)
                 instruction = LLVMGetNextInstruction(instruction)
             block = LLVMGetNextBasicBlock(block)
 
