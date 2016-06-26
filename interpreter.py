@@ -22,6 +22,17 @@ class NoSuchVariableException(Exception):
 class NoSuchTypeException(Exception):
     pass
 
+def set_var(local_vars, global_vars, var, new_value):
+    assert isinstance(new_value, Type)
+
+    if local_vars.has_key(rffi.cast(rffi.INT, var)):
+        local_vars.set_variable(rffi.cast(rffi.INT, var), new_value)
+    elif global_vars.has_key(rffi.cast(rffi.INT, var)):
+        global_vars.set_variable(rffi.cast(rffi.INT, var), new_value)
+    else:
+        print "[ERROR]: Unknown variable. Exiting."
+        raise NoSuchVariableException(rffi.charp2str(LLVMPrintValueToString(var)))
+
 def lookup_var(local_vars, global_vars, var):
     ''' Returns the value of a variable. First checks locals, then globals'''
 
@@ -72,9 +83,12 @@ class Interpreter(object):
                 print arg.value
             print "\n\n"
 
-    def exec_operation(self, state, opcode, args=[]):
+    def exec_operation(self, function, state, instruction):
+        opcode = LLVMGetInstructionOpcode(instruction)
+        args = [LLVMGetOperand(instruction, i)\
+                for i in range(0,  LLVMGetNumOperands(instruction))]
         if opcode == LLVMRet:
-            return Integer(0)
+            return lookup_var(state, self.global_state, args[0])
         elif opcode == LLVMAdd:
             x, y = self._get_args(args, state)
             assert isinstance(x, NumericType) and isinstance(y, NumericType)
@@ -89,9 +103,18 @@ class Interpreter(object):
             return Integer(x.value - y.value)
         elif opcode == LLVMCall:
             # TODO implement function calls
-
             if rffi.cast(rffi.INT, args[-1]) in self.functions.keys():
                 print "found function", rffi.charp2str(LLVMGetValueName(args[-1]))
+
+                for index in range(0, LLVMCountParams(args[-1])):
+                    param = LLVMGetParam(args[-1], index)
+
+                    # currently assumes all arguments are integers
+                    self.global_state.set_variable(rffi.cast(rffi.INT, param),\
+                                                Integer(LLVMConstIntGetSExtValue(args[index])))
+
+                interp_fun = Interpreter(self.functions, self.global_state)
+                return interp_fun.run(args[-1])
             else:
                 print rffi.charp2str(LLVMGetValueName(args[-1]))
                 string_format_ref = LLVMGetOperand(args[0], 0)
@@ -109,12 +132,21 @@ class Interpreter(object):
                 elif fn_name == "puts":
                     self.puts(string_format)
                 else:
+                    #rc = rffi.llexternal(fn_name,
+                    # how do I pass args, return type = VOIDP?
                     self.exit_not_implemented(fn_name)
         elif opcode == LLVMAlloca:
-            self.exit_not_implemented("LLVMStore")
+            ptr = Ptr(lltype.malloc(rffi.VOIDP.TO, 1, flavor="raw"))
+            return ptr
         elif opcode == LLVMStore:
             # store arg[0] in arg[1]
-            self.exit_not_implemented("LLVMStore")
+            var = lookup_var(state, self.global_state, args[0])
+            set_var(state, self.global_state, args[1], var)
+            return NoValue()
+        elif opcode == LLVMLoad:
+            return lookup_var(state, self.global_state, args[0])
+        else:
+            self.exit_not_implemented("Unknown opcode")
         return Integer(0)
 
     def run(self, function):
@@ -123,14 +155,14 @@ class Interpreter(object):
         while block:
             instruction = LLVMGetFirstInstruction(block)
             while instruction:
-                opcode = LLVMGetInstructionOpcode(instruction)
-
-                operand_list = [LLVMGetOperand(instruction, i)\
-                                for i in range(0,  LLVMGetNumOperands(instruction))]
-
-                value = self.exec_operation(self.frame, opcode, operand_list)
-                self.frame.set_variable(rffi.cast(rffi.INT, instruction), value)
+                value = self.exec_operation(function, self.frame, instruction)
+                if not isinstance(value, NoValue):
+                    self.frame.set_variable(rffi.cast(rffi.INT, instruction), value)
                 instruction = LLVMGetNextInstruction(instruction)
+                if instruction:
+                    pass
+                else:
+                    return value
             block = LLVMGetNextBasicBlock(block)
 
 def main(args):
