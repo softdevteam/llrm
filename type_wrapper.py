@@ -28,3 +28,11 @@ class Tuple(CompositeType):
     def __init__(self, value):
         self.value = value
 
+class Ptr(Type):
+    def __init__(self, value):
+        self.value = value
+
+class NoValue(Type):
+    def __init__(self, value=None):
+        self.value = value
+
