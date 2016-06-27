@@ -33,6 +33,7 @@ class InterpreterPlaceholder(Interpreter):
 
     def setup_interp(self, filename, argc, argv):
         self.output = []
+        assert len(self.output) == 0
         module = LLVMModuleCreateWithName("test_module")
 
         with lltype.scoped_alloc(rffi.CCHARPP.TO, 1) as out_message:
@@ -77,64 +78,129 @@ class InterpreterPlaceholder(Interpreter):
 
     def run_bytecode(self, argc, argv, bytecode):
         # need functions, global_state
-        with open("temp.ll", "w+") as f:
+        with open("temp.ll", "w") as f:
             f.write(bytecode)
         command = "llvm-as temp.ll"
-        subprocess.call(command, shell=True)
+        rc = subprocess.call(command, shell=True)
+        assert rc == 0
         (module, global_state, functions, main_fun) = self.setup_interp("temp.bc", argc, argv)
         self.global_state = global_state
         self.functions = functions
         self.run(main_fun)
         return self.output
 
-def test_bytecode01():
+def test_bytecode00():
     interp = InterpreterPlaceholder()
     argc = 2
     argv = ["temp.bc", "another arg"]
-    result = interp.run_bytecode(argc, argv, """
+    result = interp.run_bytecode(argc, argv, r"""
+; ModuleID = 'test.bc'
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
 
-@.str.1 = private unnamed_addr constant [43 x i8] c"c is %d and argc is %d and argc + 1 is %d\0A\00", align 1
-@.str.2 = private unnamed_addr constant [12 x i8] c"argc is %d\0A\00", align 1
-@.str.3 = private unnamed_addr constant [15 x i8] c"a float is %f\0A\00", align 1
-@.str.4 = private unnamed_addr constant [20 x i8] c"5 * argc + 1 is %d\0A\00", align 1
-@str = private unnamed_addr constant [6 x i8] c"hello\00"
+@.str = private unnamed_addr constant [43 x i8] c"c is %d and argc is %d and argc + 1 is %d\0A\00", align 1
+@.str.1 = private unnamed_addr constant [12 x i8] c"argc is %d\0A\00", align 1
+@.str.2 = private unnamed_addr constant [15 x i8] c"a float is %f\0A\00", align 1
+@.str.3 = private unnamed_addr constant [20 x i8] c"5 * argc + 1 is %d\0A\00", align 1
+@.str.4 = private unnamed_addr constant [6 x i8] c"hello\00", align 1
 
 ; Function Attrs: nounwind uwtable
-define i32 @main(i32 %argc, i8** nocapture readnone %argv) #0 {
+define i32 @main(i32 %argc, i8** %argv) #0 {
 entry:
-%puts = tail call i32 @puts(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @str, i64 0, i64 0))
-%add2 = add nsw i32 %argc, 1
-%call3 = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([43 x i8], [43 x i8]* @.str.1, i64 0, i64 0), i32 133, i32 %argc, i32 %add2)
-%call4 = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @.str.2, i64 0, i64 0), i32 %argc)
-%call5 = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([15 x i8], [15 x i8]* @.str.3, i64 0, i64 0), double 2.500000e+00)
-%mul = mul nsw i32 %argc, 5
-%add6 = add nsw i32 %mul, 1
-%call7 = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([20 x i8], [20 x i8]* @.str.4, i64 0, i64 0), i32 %add6)
-ret i32 0
+  %retval = alloca i32, align 4
+  %argc.addr = alloca i32, align 4
+  %argv.addr = alloca i8**, align 8
+  %c = alloca i32, align 4
+  store i32 0, i32* %retval, align 4
+  store i32 %argc, i32* %argc.addr, align 4
+  store i8** %argv, i8*** %argv.addr, align 8
+  store i32 133, i32* %c, align 4
+  %0 = load i32, i32* %c, align 4
+  %1 = load i32, i32* %argc.addr, align 4
+  %2 = load i32, i32* %argc.addr, align 4
+  %add = add nsw i32 %2, 1
+  %call = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([43 x i8], [43 x i8]* @.str, i32 0, i32 0), i32 %0, i32 %1, i32 %add)
+  %3 = load i32, i32* %argc.addr, align 4
+  %call1 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @.str.1, i32 0, i32 0), i32 %3)
+  %call2 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([15 x i8], [15 x i8]* @.str.2, i32 0, i32 0), double 2.550000e+00)
+  %4 = load i32, i32* %argc.addr, align 4
+  %mul = mul nsw i32 5, %4
+  %add3 = add nsw i32 %mul, 1
+  %call4 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([20 x i8], [20 x i8]* @.str.3, i32 0, i32 0), i32 %add3)
+  %call5 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @.str.4, i32 0, i32 0))
+  ret i32 0
 }
 
-; Function Attrs: nounwind
-declare i32 @printf(i8* nocapture readonly, ...) #1
+declare i32 @printf(i8*, ...) #1
 
-; Function Attrs: nounwind
-declare i32 @puts(i8* nocapture) #2
-
-attributes #0 = { nounwind uwtable "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
-attributes #1 = { nounwind "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
-attributes #2 = { nounwind }
+attributes #0 = { nounwind uwtable "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #1 = { "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
 
 !llvm.ident = !{!0}
 
 !0 = !{!"clang version 3.8.0 (tags/RELEASE_380/final)"}
 """)
-    assert result[0] == "hello"
-    assert result[1] == "c is %d and argc is %d and argc + 1 is %d\n"
-    assert result[2] == "133"
-    assert result[3] == str(argc)
-    assert result[4] == str(argc + 1)
-    assert result[5] == "argc is %d\n"
-    assert result[8] == "2.5"
 
+    assert result[0] == "c is %d and argc is %d and argc + 1 is %d\n"
+    assert result[1] == "133"
+    assert result[2] == str(argc)
+    assert result[3] == str(argc + 1)
+    assert result[4] == "argc is %d\n"
+    assert result[5] == str(argc)
+    assert result[6] == "a float is %f\n"
+    assert result[7] == "2.55"
+    assert result[8] == "5 * argc + 1 is %d\n"
+    assert result[9] == str(5 * argc + 1)
+    assert result[10] == "hello"
+
+def test_bytecode01():
+    interp = InterpreterPlaceholder()
+    argc = 4
+    argv = ["temp.bc", "another arg", "3 args", "another"]
+    result = interp.run_bytecode(argc, argv, r"""
+; ModuleID = 'test.bc'
+target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-unknown-linux-gnu"
+
+@.str = private unnamed_addr constant [3 x i8] c"%d\00", align 1
+
+; Function Attrs: nounwind uwtable
+define i32 @sum(i32 %a, i32 %b) #0 {
+entry:
+  %a.addr = alloca i32, align 4
+  %b.addr = alloca i32, align 4
+  store i32 %a, i32* %a.addr, align 4
+  store i32 %b, i32* %b.addr, align 4
+  %0 = load i32, i32* %a.addr, align 4
+  %1 = load i32, i32* %b.addr, align 4
+  %add = add nsw i32 %0, %1
+  ret i32 %add
+}
+
+; Function Attrs: nounwind uwtable
+define i32 @main(i32 %argc, i8** %argv) #0 {
+entry:
+  %retval = alloca i32, align 4
+  %argc.addr = alloca i32, align 4
+  %argv.addr = alloca i8**, align 8
+  store i32 0, i32* %retval, align 4
+  store i32 %argc, i32* %argc.addr, align 4
+  store i8** %argv, i8*** %argv.addr, align 8
+  %0 = load i32, i32* %argc.addr, align 4
+  %call = call i32 @sum(i32 %0, i32 13)
+  %call1 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i32 0, i32 0), i32 %call)
+  ret i32 0
+}
+
+declare i32 @printf(i8*, ...) #1
+
+attributes #0 = { nounwind uwtable "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #1 = { "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
+
+!llvm.ident = !{!0}
+
+!0 = !{!"clang version 3.8.0 (tags/RELEASE_380/final)"} """)
+
+    assert result[0] == "%d"
+    assert result[1] == "17"
 

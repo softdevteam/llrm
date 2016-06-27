@@ -102,17 +102,13 @@ class Interpreter(object):
             assert isinstance(x, NumericType) and isinstance(y, NumericType)
             return Integer(x.value - y.value)
         elif opcode == LLVMCall:
-            # TODO implement function calls
             if rffi.cast(rffi.INT, args[-1]) in self.functions.keys():
                 print "found function", rffi.charp2str(LLVMGetValueName(args[-1]))
 
                 for index in range(0, LLVMCountParams(args[-1])):
                     param = LLVMGetParam(args[-1], index)
-
-                    # currently assumes all arguments are integers
                     self.global_state.set_variable(rffi.cast(rffi.INT, param),\
-                                                Integer(LLVMConstIntGetSExtValue(args[index])))
-
+                                                    lookup_var(state, self.global_state, args[index]))
                 interp_fun = Interpreter(self.functions, self.global_state)
                 return interp_fun.run(args[-1])
             else:
@@ -211,8 +207,8 @@ def main(args):
                 raise TypeError(rffi.charp2str(LLVMPrintValueToString(initializer)))
         global_var = LLVMGetNextGlobal(global_var)
 
-    main_argc = len(args) - 2
-    main_argv = args[2:]
+    main_argc = len(args) - 1
+    main_argv = args[1:]
 
     # setting argc and argv of the C program
     # warning: argc and argv are currently accessible
