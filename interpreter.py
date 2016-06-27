@@ -24,7 +24,6 @@ class NoSuchTypeException(Exception):
 
 def set_var(local_vars, global_vars, var, new_value):
     assert isinstance(new_value, Type)
-
     if local_vars.has_key(rffi.cast(rffi.INT, var)):
         local_vars.set_variable(rffi.cast(rffi.INT, var), new_value)
     elif global_vars.has_key(rffi.cast(rffi.INT, var)):
@@ -44,7 +43,7 @@ def lookup_var(local_vars, global_vars, var):
         var_type = LLVMGetTypeKind(LLVMTypeOf(var))
         if var_type == LLVMIntegerTypeKind:
             return Integer(LLVMConstIntGetSExtValue(var))
-        elif var_type == LLVMDoubleTypeKind:
+        elif var_type == LLVMDoubleTypeKind or var_type == LLVMFloatTypeKind:
             with lltype.scoped_alloc(rffi.SIGNEDP.TO, 1) as signed_ptr:
                 return Float(LLVMConstRealGetDouble(var, signed_ptr))
         else:
@@ -93,6 +92,10 @@ class Interpreter(object):
             x, y = self._get_args(args, state)
             assert isinstance(x, NumericType) and isinstance(y, NumericType)
             return Integer(x.value + y.value)
+        elif opcode == LLVMFAdd:
+            x, y = self._get_args(args, state)
+            assert isinstance(x, NumericType) and isinstance(y, NumericType)
+            return Float(x.value + y.value)
         elif opcode == LLVMMul:
             x, y = self._get_args(args, state)
             assert isinstance(x, NumericType) and isinstance(y, NumericType)
@@ -141,9 +144,23 @@ class Interpreter(object):
             return NoValue()
         elif opcode == LLVMLoad:
             return lookup_var(state, self.global_state, args[0])
+        elif opcode == LLVMFPExt:
+            # extend a floating point value (eg float -> double)
+            var_val = lookup_var(state, self.global_state, args[0])
+            assert isinstance(var_val, Float)
+            return Float(var_val.value)
+        elif opcode == LLVMFPTrunc:
+            # truncate a floating point value (double -> float)
+            var_val = lookup_var(state, self.global_state, args[0])
+            assert isinstance(var_val, Float)
+            return Float(var_val.value)
+        elif opcode == LLVMSIToFP:
+            var_val = lookup_var(state, self.global_state, args[0])
+            assert isinstance(var_val, NumericType)
+            return Float(float(var_val.value))
         else:
             self.exit_not_implemented("Unknown opcode")
-        return Integer(0)
+        return NoValue()
 
     def run(self, function):
         self.frame = State()
@@ -155,9 +172,7 @@ class Interpreter(object):
                 if not isinstance(value, NoValue):
                     self.frame.set_variable(rffi.cast(rffi.INT, instruction), value)
                 instruction = LLVMGetNextInstruction(instruction)
-                if instruction:
-                    pass
-                else:
+                if not instruction:
                     return value
             block = LLVMGetNextBasicBlock(block)
 
