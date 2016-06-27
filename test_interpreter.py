@@ -1,96 +1,7 @@
-from __future__ import with_statement
-
-from interpreter import Interpreter
-from state import State
-from type_wrapper import Integer, List, String, NumericType
-from llvm_wrapper import *
-
-import sys
-import subprocess
-
-class InterpreterPlaceholder(Interpreter):
-
-    def __init__(self):
-        pass
-
-    def puts(self, string, args=[]):
-        self.output.append(string)
-        for arg in args:
-            if isinstance(arg, NumericType):
-                self.output.append(str(arg.value))
-            else:
-                self.output.append(str(arg))
-
-    def set_args(self, main_fun, global_state, argc, argv):
-        for index in range(0, LLVMCountParams(main_fun)):
-            param = LLVMGetParam(main_fun, index)
-            if index == 0:
-                global_state.set_variable(rffi.cast(rffi.INT, param),\
-                                                    Integer(argc))
-            else:
-                global_state.set_variable(rffi.cast(rffi.INT, param),\
-                                                    List(argv))
-
-    def setup_interp(self, filename, argc, argv):
-        self.output = []
-        assert len(self.output) == 0
-        module = LLVMModuleCreateWithName("test_module")
-
-        with lltype.scoped_alloc(rffi.CCHARPP.TO, 1) as out_message:
-            mem_buff = lltype.malloc(rffi.VOIDP.TO, 1, flavor="raw")
-            with lltype.scoped_alloc(rffi.VOIDPP.TO, 1) as mem_buff_ptr:
-                mem_buff_ptr[0] = mem_buff
-                rc = LLVMCreateMemoryBufferWithContentsOfFile(filename, mem_buff_ptr, out_message)
-                assert rc == 0
-                mem_buff = mem_buff_ptr[0]
-
-            with lltype.scoped_alloc(rffi.VOIDPP.TO, 1) as module_ptr:
-                module_ptr[0] = module
-                rc = LLVMParseBitcode(mem_buff, module_ptr, out_message)
-                assert rc == 0
-                module = module_ptr[0]
-            main_fun = LLVMGetNamedFunction(module, "main")
-
-        with lltype.scoped_alloc(rffi.VOIDPP.TO, 1) as basic_blocks_main_ptr:
-            LLVMGetBasicBlocks(main_fun, basic_blocks_main_ptr)
-            basic_blocks_main = basic_blocks_main_ptr[0]
-
-        global_state = State()
-        global_var = LLVMGetFirstGlobal(module)
-
-        while global_var:
-            with lltype.scoped_alloc(rffi.INTP.TO, 1) as int_ptr:
-                initializer = LLVMGetInitializer(global_var)
-                assert LLVMIsConstantString(initializer)
-                string_var = LLVMGetAsString(initializer, int_ptr)
-                global_state.set_variable(rffi.cast(rffi.INT, global_var),\
-                                          String(rffi.charp2str(string_var)))
-            global_var = LLVMGetNextGlobal(global_var)
-
-        functions = {}
-        function = LLVMGetFirstFunction(module)
-        while function:
-            if not LLVMIsDeclaration(function):
-                functions[rffi.cast(rffi.INT, function)] = function
-            function = LLVMGetNextFunction(function)
-        self.set_args(main_fun, global_state, argc, argv)
-        return (module, global_state, functions, main_fun)
-
-    def run_bytecode(self, argc, argv, bytecode):
-        # need functions, global_state
-        with open("temp.ll", "w") as f:
-            f.write(bytecode)
-        command = "llvm-as temp.ll"
-        rc = subprocess.call(command, shell=True)
-        assert rc == 0
-        (module, global_state, functions, main_fun) = self.setup_interp("temp.bc", argc, argv)
-        self.global_state = global_state
-        self.functions = functions
-        self.run(main_fun)
-        return self.output
+from base_bytecode_test import BaseBytecodeTest
 
 def test_arithmetic():
-    interp = InterpreterPlaceholder()
+    interp = BaseBytecodeTest()
     argc = 2
     argv = ["temp.bc", "another arg"]
     result = interp.run_bytecode(argc, argv, r"""
@@ -154,7 +65,7 @@ attributes #1 = { "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-
     assert result[10] == "hello"
 
 def test_functions():
-    interp = InterpreterPlaceholder()
+    interp = BaseBytecodeTest()
     argc = 4
     argv = ["temp.bc", "another arg", "3 args", "another"]
     result = interp.run_bytecode(argc, argv, r"""
@@ -205,7 +116,7 @@ attributes #1 = { "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-
     assert result[1] == "17"
 
 def test_floats():
-    interp = InterpreterPlaceholder()
+    interp = BaseBytecodeTest()
     argc = 1
     argv = ["temp.bc"]
     result = interp.run_bytecode(argc, argv, r"""
