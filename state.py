@@ -27,7 +27,7 @@ class State(object):
         ''' Sets the given local variable to a specified value. '''
 
         off = self.get_variable_off(name)
-        assert isinstance(val, Type)
+        assert isinstance(val, Value)
         self.vars[off] = val
 
     def has_key(self, name):

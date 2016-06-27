@@ -284,12 +284,6 @@ LLVMIsDeclaration = rffi.llexternal("LLVMIsDeclaration",
                                      rffi.INT,
                                      compilation_info=CConfig._compilation_info_)
 
-LLVMInt32Type = rffi.llexternal("LLVMInt32Type",
-                                [],
-                                 rffi.VOIDP,
-                                 compilation_info=CConfig._compilation_info_)
-
-
 LLVMConstInt = rffi.llexternal("LLVMConstInt",
                                [rffi.VOIDP, rffi.INT, rffi.INT],
                                 rffi.VOIDP,
@@ -309,6 +303,3 @@ LLVMTypeOf = rffi.llexternal("LLVMTypeOf",
                              [rffi.VOIDP],
                               rffi.VOIDP,
                               compilation_info=CConfig._compilation_info_)
-
-def getReference():
-    return lltype.malloc(rffi.VOIDP.TO, 1, flavor="raw")
