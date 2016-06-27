@@ -89,7 +89,7 @@ class InterpreterPlaceholder(Interpreter):
         self.run(main_fun)
         return self.output
 
-def test_bytecode00():
+def test_arithmetic():
     interp = InterpreterPlaceholder()
     argc = 2
     argv = ["temp.bc", "another arg"]
@@ -153,7 +153,7 @@ attributes #1 = { "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-
     assert result[9] == str(5 * argc + 1)
     assert result[10] == "hello"
 
-def test_bytecode01():
+def test_functions():
     interp = InterpreterPlaceholder()
     argc = 4
     argv = ["temp.bc", "another arg", "3 args", "another"]
@@ -204,3 +204,108 @@ attributes #1 = { "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-
     assert result[0] == "%d"
     assert result[1] == "17"
 
+def test_floats():
+    interp = InterpreterPlaceholder()
+    argc = 1
+    argv = ["temp.bc"]
+    result = interp.run_bytecode(argc, argv, r"""
+; ModuleID = 'test.bc'
+target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-unknown-linux-gnu"
+
+@.str = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
+@.str.1 = private unnamed_addr constant [4 x i8] c"%f\0A\00", align 1
+@.str.2 = private unnamed_addr constant [5 x i8] c"%lf\0A\00", align 1
+
+; Function Attrs: nounwind uwtable
+define float @sum_fl_int(double %a, i32 %b) #0 {
+entry:
+  %a.addr = alloca double, align 8
+  %b.addr = alloca i32, align 4
+  store double %a, double* %a.addr, align 8
+  store i32 %b, i32* %b.addr, align 4
+  %0 = load double, double* %a.addr, align 8
+  %1 = load i32, i32* %b.addr, align 4
+  %conv = sitofp i32 %1 to double
+  %add = fadd double %0, %conv
+  %conv1 = fptrunc double %add to float
+  ret float %conv1
+}
+
+; Function Attrs: nounwind uwtable
+define double @dbl_sum(double %a, double %b) #0 {
+entry:
+  %a.addr = alloca double, align 8
+  %b.addr = alloca double, align 8
+  store double %a, double* %a.addr, align 8
+  store double %b, double* %b.addr, align 8
+  %0 = load double, double* %a.addr, align 8
+  %1 = load double, double* %b.addr, align 8
+  %add = fadd double %0, %1
+  ret double %add
+}
+
+; Function Attrs: nounwind uwtable
+define i32 @sum_int_int(i32 %a, i32 %b) #0 {
+entry:
+  %a.addr = alloca i32, align 4
+  %b.addr = alloca i32, align 4
+  store i32 %a, i32* %a.addr, align 4
+  store i32 %b, i32* %b.addr, align 4
+  %0 = load i32, i32* %a.addr, align 4
+  %1 = load i32, i32* %b.addr, align 4
+  %add = add nsw i32 %0, %1
+  ret i32 %add
+}
+
+; Function Attrs: nounwind uwtable
+define i32 @main(i32 %argc, i8** %argv) #0 {
+entry:
+  %retval = alloca i32, align 4
+  %argc.addr = alloca i32, align 4
+  %argv.addr = alloca i8**, align 8
+  %x = alloca i32, align 4
+  %y = alloca i32, align 4
+  %z = alloca float, align 4
+  %k = alloca double, align 8
+  store i32 0, i32* %retval, align 4
+  store i32 %argc, i32* %argc.addr, align 4
+  store i8** %argv, i8*** %argv.addr, align 8
+  store i32 2, i32* %x, align 4
+  store i32 5, i32* %y, align 4
+  store float 0x40059999A0000000, float* %z, align 4
+  store double 0x408D07D188F42FE8, double* %k, align 8
+  %0 = load i32, i32* %x, align 4
+  %1 = load i32, i32* %y, align 4
+  %call = call i32 @sum_int_int(i32 %0, i32 %1)
+  %call1 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str, i32 0, i32 0), i32 %call)
+  %2 = load float, float* %z, align 4
+  %conv = fpext float %2 to double
+  %3 = load i32, i32* %y, align 4
+  %call2 = call float @sum_fl_int(double %conv, i32 %3)
+  %conv3 = fpext float %call2 to double
+  %call4 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str.1, i32 0, i32 0), double %conv3)
+  %4 = load double, double* %k, align 8
+  %5 = load i32, i32* %x, align 4
+  %conv5 = sitofp i32 %5 to double
+  %call6 = call double @dbl_sum(double %4, double %conv5)
+  %call7 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([5 x i8], [5 x i8]* @.str.2, i32 0, i32 0), double %call6)
+  ret i32 0
+}
+
+declare i32 @printf(i8*, ...) #1
+
+attributes #0 = { nounwind uwtable "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #1 = { "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
+
+!llvm.ident = !{!0}
+
+!0 = !{!"clang version 3.8.0 (tags/RELEASE_380/final)"}
+""")
+
+    assert result[0] == "%d\n"
+    assert result[1] == "7"
+    assert result[2] == "%f\n"
+    assert result[3][:3] == "7.7"
+    assert result[4] == "%lf\n"
+    assert result[5] == "930.977312"
