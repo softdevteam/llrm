@@ -21,6 +21,15 @@ class NoSuchVariableException(Exception):
 class NoSuchTypeException(Exception):
     pass
 
+class InvalidFileException(Exception):
+    pass
+
+class UnparsableBitcodeException(Exception):
+    pass
+
+class Exception(Exception):
+    pass
+
 class Interpreter(object):
 
     def __init__(self, functions, global_state = None):
@@ -208,33 +217,33 @@ def load_globals(module, global_state, main_argc, main_argv):
             global_state.set_variable(rffi.cast(rffi.INT, param),\
                                                 List(main_argv))
 
-def main(args):
-    if len(args) < 2:
-        print"[ERROR]: Need an argument:\nUsage: ./llvmtest name.bc [C args]\n"
-        return 1
-
-    module = LLVMModuleCreateWithName("module_test")
-
+def create_module(filename):
+    module = LLVMModuleCreateWithName("module")
     with lltype.scoped_alloc(rffi.CCHARPP.TO, 1) as out_message:
-        #mem_buff = lltype.malloc(rffi.VOIDP.TO, 1, flavor="raw")
         with lltype.scoped_alloc(rffi.VOIDP.TO, 1) as mem_buff:
             with lltype.scoped_alloc(rffi.VOIDPP.TO, 1) as mem_buff_ptr:
                 mem_buff_ptr[0] = mem_buff
-                rc = LLVMCreateMemoryBufferWithContentsOfFile(args[1], mem_buff_ptr, out_message)
+                rc = LLVMCreateMemoryBufferWithContentsOfFile(filename, mem_buff_ptr, out_message)
                 if rc != 0:
                     print"[ERROR]: Cannot create memory buffer with contents of"\
-                         " %s: %s.\n" % (args[1], rffi.charp2str(out_message[0]))
-                    return 2
+                         " %s: %s.\n" % (filename, rffi.charp2str(out_message[0]))
+                    raise InvalidFileException(filename)
                 mem_buff = mem_buff_ptr[0]
 
             with lltype.scoped_alloc(rffi.VOIDPP.TO, 1) as module_ptr:
                 module_ptr[0] = module
                 rc = LLVMParseBitcode(mem_buff, module_ptr, out_message)
                 if rc != 0:
-                    print "[ERROR]: Cannot parse %s: %s.\n" % (args[1], rffi.charp2str(out_message[0]))
-                    return 3
+                    print "[ERROR]: Cannot parse %s: %s.\n" % (filename, rffi.charp2str(out_message[0]))
+                    raise UnparsableBitcodeException(filename)
                 module = module_ptr[0]
+    return module
 
+def main(args):
+    if len(args) < 2:
+        print"[ERROR]: Need an argument:\nUsage: ./llvmtest name.bc [C args]\n"
+        return 1
+    module = create_module(args[1])
     main_argc = len(args) - 1
     main_argv = args[1:]
     global_state = State()
