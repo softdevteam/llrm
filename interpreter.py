@@ -27,9 +27,6 @@ class InvalidFileException(Exception):
 class UnparsableBitcodeException(Exception):
     pass
 
-class Exception(Exception):
-    pass
-
 class Interpreter(object):
 
     def __init__(self, functions, global_state = None):
@@ -102,7 +99,10 @@ class Interpreter(object):
         args = [LLVMGetOperand(instruction, i)\
                 for i in range(LLVMGetNumOperands(instruction))]
         if opcode == LLVMRet:
-            return self.lookup_var(args[0])
+            if len(args) == 0:
+                return NoValue()
+            else:
+                return self.lookup_var(args[0])
         elif opcode == LLVMAdd:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
@@ -115,10 +115,26 @@ class Interpreter(object):
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(x.value * y.value)
+        elif opcode == LLVMFMul:
+            x, y = self._get_args(args)
+            assert isinstance(x, Float) and isinstance(y, Float)
+            return Float(x.value * y.value)
         elif opcode == LLVMSub:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(x.value - y.value)
+        elif opcode == LLVMSDiv:
+            x, y = self._get_args(args)
+            assert isinstance(x, Integer) and isinstance(y, Integer)
+            return Integer(x.value / y.value)
+        elif opcode == LLVMFDiv:
+            x, y = self._get_args(args)
+            assert isinstance(x, Float) and isinstance(y, Float)
+            return Float(x.value / y.value)
+        elif opcode == LLVMFSub:
+            x, y = self._get_args(args)
+            assert isinstance(x, Float) and isinstance(y, Float)
+            return Float(x.value - y.value)
         elif opcode == LLVMCall:
             if self.has_function(args[-1]):
                 for index in range(LLVMCountParams(args[-1])):
