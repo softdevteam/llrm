@@ -220,3 +220,92 @@ attributes #1 = { "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-
     assert result[3][:3] == "7.7"
     assert result[4] == "%lf\n"
     assert result[5] == "930.977312"
+
+def test_branching():
+    interp = BaseBytecodeTest()
+    argc = 1
+    argv = ["temp.bc"]
+    result = interp.run_bytecode(argc, argv, r"""
+; ModuleID = 'test.bc'
+target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-unknown-linux-gnu"
+
+@.str = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
+
+; Function Attrs: nounwind uwtable
+define i32 @sum(i32 %n) #0 {
+entry:
+  %retval = alloca i32, align 4
+  %n.addr = alloca i32, align 4
+  store i32 %n, i32* %n.addr, align 4
+  %0 = load i32, i32* %n.addr, align 4
+  %cmp = icmp sgt i32 %0, 0
+  br i1 %cmp, label %if.then, label %if.end
+
+if.then:                                          ; preds = %entry
+  %1 = load i32, i32* %n.addr, align 4
+  %2 = load i32, i32* %n.addr, align 4
+  %sub = sub nsw i32 %2, 1
+  %call = call i32 @sum(i32 %sub)
+  %add = add nsw i32 %1, %call
+  store i32 %add, i32* %retval, align 4
+  br label %return
+
+if.end:                                           ; preds = %entry
+  store i32 0, i32* %retval, align 4
+  br label %return
+
+return:                                           ; preds = %if.end, %if.then
+  %3 = load i32, i32* %retval, align 4
+  ret i32 %3
+}
+
+; Function Attrs: nounwind uwtable
+define i32 @main(i32 %argc, i8** %argv) #0 {
+entry:
+  %retval = alloca i32, align 4
+  %argc.addr = alloca i32, align 4
+  %argv.addr = alloca i8**, align 8
+  %i = alloca i32, align 4
+  store i32 0, i32* %retval, align 4
+  store i32 %argc, i32* %argc.addr, align 4
+  store i8** %argv, i8*** %argv.addr, align 8
+  %call = call i32 @sum(i32 10)
+  %call1 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str, i32 0, i32 0), i32 %call)
+  %0 = load i32, i32* %argc.addr, align 4
+  %mul = mul nsw i32 3, %0
+  store i32 %mul, i32* %i, align 4
+  br label %while.cond
+
+while.cond:                                       ; preds = %while.body, %entry
+  %1 = load i32, i32* %i, align 4
+  %dec = add nsw i32 %1, -1
+  store i32 %dec, i32* %i, align 4
+  %cmp = icmp sgt i32 %1, 0
+  br i1 %cmp, label %while.body, label %while.end
+
+while.body:                                       ; preds = %while.cond
+  %2 = load i32, i32* %i, align 4
+  %call2 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str, i32 0, i32 0), i32 %2)
+  br label %while.cond
+
+while.end:                                        ; preds = %while.cond
+  ret i32 0
+}
+
+declare i32 @printf(i8*, ...) #1
+
+attributes #0 = { nounwind uwtable "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #1 = { "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2" "unsafe-fp-math"="false" "use-soft-float"="false" }
+
+!llvm.ident = !{!0}
+
+!0 = !{!"clang version 3.8.0 (tags/RELEASE_380/final)"}
+""")
+
+    assert result[0] == "%d\n"
+    assert result[1] == "55"
+    assert result[3] == "2"
+    assert result[5] == "1"
+    assert result[7] == "0"
+
