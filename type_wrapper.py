@@ -35,3 +35,11 @@ class NoValue(Value):
     def __init__(self, value=None):
         self.value = value
 
+class BasicBlock(Value):
+    def __init__(self, value):
+        self.value = value
+
+class Boolean(Value):
+    def __init__(self, value):
+        self.value = value
+
