@@ -5,13 +5,10 @@ LDFLAGS := $(shell llvm-config --cxxflags --ldflags --libs core native --system-
 
 .PHONY: all clean
 
-all: test.bc llvmtest
+all: test.bc
 
 test.bc: test.c
-	$(CLANG_CC) -emit-llvm test.c -c -O2 -o test.bc
-
-llvmtest: llvmtest.o
-	$(CC) $< $(LDFLAGS) -o $@
+	$(CLANG_CC) -emit-llvm test.c -c -O2  -o test.bc
 
 clean:
-	-rm -f llvmtest.o llvmtest test.bc test test.o test.ll test.s
+	-rm -f test.bc test test.o test.ll test.s
