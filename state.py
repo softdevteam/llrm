@@ -1,3 +1,4 @@
+from type_wrapper import *
 
 class State(object):
     ''' Represents the state of a stack frame or of the entire program. '''
@@ -19,13 +20,14 @@ class State(object):
         if off == -1:
             off = len(self.vars)
             self.var_offsets[name] = off
-            self.vars.append(-1)
+            self.vars.append(Integer(-1))
         return off
 
     def set_variable(self, name, val):
         ''' Sets the given local variable to a specified value. '''
 
         off = self.get_variable_off(name)
+        assert isinstance(val, Value)
         self.vars[off] = val
 
     def has_key(self, name):

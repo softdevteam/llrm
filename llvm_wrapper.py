@@ -25,6 +25,25 @@ class CConfig(object):
                                                  libraries=libs,
                                                  compile_extra=c_flags,
                                                  link_extra=ld_flags)
+types_string = '''
+LLVMVoidTypeKind
+LLVMHalfTypeKind
+LLVMFloatTypeKind
+LLVMDoubleTypeKind
+LLVMX86_FP80TypeKind
+LLVMFP128TypeKind
+LLVMPPC_FP128TypeKind
+LLVMLabelTypeKind
+LLVMIntegerTypeKind
+LLVMFunctionTypeKind
+LLVMStructTypeKind
+LLVMArrayTypeKind
+LLVMPointerTypeKind
+LLVMVectorTypeKind
+LLVMMetadataTypeKind
+LLVMX86_MMXTypeKind
+LLVMTokenTypeKind'''
+
 opcodes_string ='''
 LLVMRet
 LLVMBr
@@ -96,10 +115,18 @@ ops = opcodes_string.split()
 for cmd in ops:
     setattr(CConfig, cmd, rffi_platform.ConstantInteger(cmd))
 
+types = types_string.split()
+
+for llvm_type in types:
+    setattr(CConfig, llvm_type, rffi_platform.ConstantInteger(llvm_type))
+
 cconfig = rffi_platform.configure(CConfig)
 
 for cmd in ops:
     globals()[cmd] = cconfig[cmd]
+
+for llvm_type in types:
+    globals()[llvm_type] = cconfig[llvm_type]
 
 LLVMModuleCreateWithName = rffi.llexternal("LLVMModuleCreateWithName",
                                            [rffi.CCHARP],
@@ -115,6 +142,12 @@ LLVMPrintValueToString = rffi.llexternal("LLVMPrintValueToString",
                                          [rffi.VOIDP],
                                           rffi.CCHARP,
                                           compilation_info=CConfig._compilation_info_)
+
+LLVMPrintTypeToString = rffi.llexternal("LLVMPrintTypeToString",
+                                         [rffi.VOIDP],
+                                          rffi.CCHARP,
+                                          compilation_info=CConfig._compilation_info_)
+
 
 LLVMCreateMemoryBufferWithContentsOfFile = rffi.llexternal("LLVMCreateMemoryBufferWithContentsOfFile",
                                                             [rffi.CCHARP, rffi.VOIDPP, rffi.CCHARPP],
@@ -216,7 +249,6 @@ LLVMIsGlobalConstant = rffi.llexternal("LLVMIsGlobalConstant",
                                         rffi.INT,
                                         compilation_info=CConfig._compilation_info_)
 
-
 LLVMIsConstantString = rffi.llexternal("LLVMIsConstantString",
                                        [rffi.VOIDP],
                                         rffi.INT,
@@ -237,5 +269,37 @@ LLVMCountParams = rffi.llexternal("LLVMCountParams",
                                    rffi.INT,
                                    compilation_info=CConfig._compilation_info_)
 
-def getReference():
-    return lltype.malloc(rffi.VOIDP.TO, 1, flavor="raw")
+LLVMGetFirstFunction = rffi.llexternal("LLVMGetFirstFunction",
+                                       [rffi.VOIDP],
+                                        rffi.VOIDP,
+                                        compilation_info=CConfig._compilation_info_)
+
+LLVMGetNextFunction = rffi.llexternal("LLVMGetNextFunction",
+                                       [rffi.VOIDP],
+                                        rffi.VOIDP,
+                                        compilation_info=CConfig._compilation_info_)
+
+LLVMIsDeclaration = rffi.llexternal("LLVMIsDeclaration",
+                                    [rffi.VOIDP],
+                                     rffi.INT,
+                                     compilation_info=CConfig._compilation_info_)
+
+LLVMConstInt = rffi.llexternal("LLVMConstInt",
+                               [rffi.VOIDP, rffi.INT, rffi.INT],
+                                rffi.VOIDP,
+                                compilation_info=CConfig._compilation_info_)
+
+LLVMConstRealGetDouble = rffi.llexternal("LLVMConstRealGetDouble",
+                                         [rffi.VOIDP, rffi.SIGNEDP],
+                                          rffi.DOUBLE,
+                                          compilation_info=CConfig._compilation_info_)
+
+LLVMGetTypeKind = rffi.llexternal("LLVMGetTypeKind",
+                                  [rffi.VOIDP],
+                                   rffi.INT,
+                                   compilation_info=CConfig._compilation_info_)
+
+LLVMTypeOf = rffi.llexternal("LLVMTypeOf",
+                             [rffi.VOIDP],
+                              rffi.VOIDP,
+                              compilation_info=CConfig._compilation_info_)
