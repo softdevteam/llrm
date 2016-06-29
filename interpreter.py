@@ -1,6 +1,7 @@
 from __future__ import with_statement
 from rpython.rlib import jit
-from type_wrapper import String, Integer, Float, Ptr, List, Value, NoValue, NumericValue
+from type_wrapper import String, Integer, Float, Ptr, List,\
+                         Value, NoValue, NumericValue, BasicBlock, Boolean
 from llvm_wrapper import *
 from state import State
 
@@ -90,9 +91,35 @@ class Interpreter(object):
             raise NoSuchVariableException(rffi.charp2str(LLVMPrintValueToString(var)))
 
     def has_function(self, function):
+        ''' Return true if the file being interpreted contains a given function,
+            false otherwise. '''
+
         if rffi.cast(rffi.INT, function) in self.functions:
             return True
         return False
+
+    def eval_condition(self, predicate, val1, val2):
+        ''' Returns the wrapped boolean result of the comparison of the values of
+            the two arguments, according to an ICmp predicate. '''
+
+        assert isinstance(val1, Integer) and isinstance(val2, Integer)
+        if predicate == LLVMIntSLT:
+            return Boolean(val1.value < val2.value)
+        elif predicate == LLVMIntSLE:
+            return Boolean(val1.value <= val2.value)
+        elif predicate == LLVMIntEQ:
+            return Boolean(val1.value == val2.value)
+        elif predicate == LLVMIntNE:
+            return Boolean(val1.value != val2.value)
+        elif predicate == LLVMIntSGT:
+            return Boolean(val1.value > val2.value)
+        elif predicate == LLVMIntSGE:
+            return Boolean(val1.value >= val2.value)
+        else:
+            self.exit_not_implemented("Unknown ICmp predicate %d" % predicate)
+
+    def eval_fcondition(self, predicate, val1, val2):
+        self.exit_not_implemented("Unknown ICmp predicate %d" % predicate)
 
     def exec_operation(self, instruction):
         opcode = LLVMGetInstructionOpcode(instruction)
@@ -181,8 +208,31 @@ class Interpreter(object):
             var_val = self.lookup_var(args[0])
             assert isinstance(var_val, Integer)
             return Float(float(var_val.value))
+        elif opcode == LLVMBr:
+            # if the jump is conditional, it's necessary to find
+            # the block to jump to
+            if LLVMIsConditional(instruction):
+                cond = self.lookup_var(LLVMGetCondition(instruction))
+                assert isinstance(cond, Boolean)
+                if cond.value == True:
+                    return BasicBlock(LLVMValueAsBasicBlock(args[2]))
+                else:
+                    return BasicBlock(LLVMValueAsBasicBlock(args[1]))
+            else:
+                # unconditional jump
+                return BasicBlock(LLVMValueAsBasicBlock(args[0]))
+        elif opcode == LLVMICmp:
+            val1 = self.lookup_var(args[0])
+            val2 = self.lookup_var(args[1])
+            predicate = LLVMGetICmpPredicate(instruction)
+            return self.eval_condition(predicate, val1, val2)
+        elif opcode == LLVMFCmp:
+            val1 = self.lookup_var(args[0])
+            val2 = self.lookup_var(args[1])
+            predicate = LLVMGetFCmpPredicate(instruction)
+            return self.eval_fcondition(predicate, val1, val2)
         else:
-            self.exit_not_implemented("Unknown opcode")
+            self.exit_not_implemented("Unknown opcode %d" % opcode)
         return NoValue()
 
     def run(self, function):
@@ -190,17 +240,25 @@ class Interpreter(object):
         block = LLVMGetFirstBasicBlock(function)
         while block:
             instruction = LLVMGetFirstInstruction(block)
+            next_block = LLVMGetNextBasicBlock(block)
             while instruction:
                 value = self.exec_operation(instruction)
-                if not isinstance(value, NoValue):
+                # a jump instruction has been processed
+                # (it returns a basic block)
+                if isinstance(value, BasicBlock):
+                    next_block = value.value
+                    break
+                elif not isinstance(value, NoValue):
                     self.frame.set_variable(rffi.cast(rffi.INT, instruction), value)
                 instruction = LLVMGetNextInstruction(instruction)
                 # last instruction should be ret
                 if not instruction:
                     return value
-            block = LLVMGetNextBasicBlock(block)
+            block = next_block
 
 def load_func_table(module):
+    ''' Creates the function table for the interpreter. '''
+
     functions = {}
     function = LLVMGetFirstFunction(module)
     while function:
@@ -210,6 +268,9 @@ def load_func_table(module):
     return functions
 
 def load_globals(module, global_state, main_argc, main_argv):
+    ''' Loads the global variables for the interpreter, including
+        the argc and argv. '''
+
     global_var = LLVMGetFirstGlobal(module)
     main_fun = LLVMGetNamedFunction(module, "main")
     while global_var:
@@ -234,6 +295,8 @@ def load_globals(module, global_state, main_argc, main_argv):
                                                 List(main_argv))
 
 def create_module(filename):
+    ''' Returns the module created with the contents of the given file. '''
+
     module = LLVMModuleCreateWithName("module")
     with lltype.scoped_alloc(rffi.CCHARPP.TO, 1) as out_message:
         with lltype.scoped_alloc(rffi.VOIDP.TO, 1) as mem_buff:

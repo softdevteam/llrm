@@ -110,6 +110,37 @@ LLVMCatchPad
 LLVMCleanupPad
 LLVMCatchSwitch'''
 
+int_predicate_string = '''
+LLVMIntEQ
+LLVMIntNE
+LLVMIntUGT
+LLVMIntUGE
+LLVMIntULT
+LLVMIntULE
+LLVMIntSGT
+LLVMIntSGE
+LLVMIntSLT
+LLVMIntSLE '''
+
+real_predicate_string = '''
+LLVMRealPredicateFalse
+LLVMRealOEQ
+LLVMRealOGT
+LLVMRealOGE
+LLVMRealOLT
+LLVMRealOLE
+LLVMRealONE
+LLVMRealORD
+LLVMRealUNO
+LLVMRealUEQ
+LLVMRealUGT
+LLVMRealUGE
+LLVMRealULT
+LLVMRealULE
+LLVMRealUNE
+LLVMRealPredicateTrue
+'''
+
 ops = opcodes_string.split()
 
 for cmd in ops:
@@ -120,6 +151,16 @@ types = types_string.split()
 for llvm_type in types:
     setattr(CConfig, llvm_type, rffi_platform.ConstantInteger(llvm_type))
 
+int_predicates = int_predicate_string.split()
+
+for pred in int_predicates:
+    setattr(CConfig, pred, rffi_platform.ConstantInteger(pred))
+
+real_predicates = real_predicate_string.split()
+
+for pred in real_predicates:
+    setattr(CConfig, pred, rffi_platform.ConstantInteger(pred))
+
 cconfig = rffi_platform.configure(CConfig)
 
 for cmd in ops:
@@ -127,6 +168,13 @@ for cmd in ops:
 
 for llvm_type in types:
     globals()[llvm_type] = cconfig[llvm_type]
+
+for pred in int_predicates:
+    globals()[pred] = cconfig[pred]
+
+for pred in real_predicates:
+    globals()[pred] = cconfig[pred]
+
 
 LLVMModuleCreateWithName = rffi.llexternal("LLVMModuleCreateWithName",
                                            [rffi.CCHARP],
@@ -147,7 +195,6 @@ LLVMPrintTypeToString = rffi.llexternal("LLVMPrintTypeToString",
                                          [rffi.VOIDP],
                                           rffi.CCHARP,
                                           compilation_info=CConfig._compilation_info_)
-
 
 LLVMCreateMemoryBufferWithContentsOfFile = rffi.llexternal("LLVMCreateMemoryBufferWithContentsOfFile",
                                                             [rffi.CCHARP, rffi.VOIDPP, rffi.CCHARPP],
@@ -303,3 +350,28 @@ LLVMTypeOf = rffi.llexternal("LLVMTypeOf",
                              [rffi.VOIDP],
                               rffi.VOIDP,
                               compilation_info=CConfig._compilation_info_)
+
+LLVMValueAsBasicBlock = rffi.llexternal("LLVMValueAsBasicBlock",
+                                         [rffi.VOIDP],
+                                          rffi.VOIDP,
+                                          compilation_info=CConfig._compilation_info_)
+
+LLVMGetCondition = rffi.llexternal("LLVMGetCondition",
+                                   [rffi.VOIDP],
+                                    rffi.VOIDP,
+                                    compilation_info=CConfig._compilation_info_)
+
+LLVMIsConditional = rffi.llexternal("LLVMIsConditional",
+                                    [rffi.VOIDP],
+                                     rffi.VOIDP,
+                                     compilation_info=CConfig._compilation_info_)
+
+LLVMGetICmpPredicate = rffi.llexternal("LLVMGetICmpPredicate",
+                                       [rffi.VOIDP],
+                                        rffi.INT,
+                                        compilation_info=CConfig._compilation_info_)
+
+LLVMGetFCmpPredicate = rffi.llexternal("LLVMGetFCmpPredicate",
+                                       [rffi.VOIDP],
+                                        rffi.INT,
+                                        compilation_info=CConfig._compilation_info_)
