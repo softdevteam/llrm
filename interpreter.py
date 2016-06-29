@@ -1,7 +1,7 @@
 from __future__ import with_statement
 from rpython.rlib import jit
 from type_wrapper import String, Integer, Float, Ptr, List,\
-                         Value, NoValue, NumericValue, BasicBlock, Boolean
+                         Value, NoValue, NumericValue, BasicBlock
 from llvm_wrapper import *
 from state import State
 
@@ -77,6 +77,26 @@ class Interpreter(object):
             raise NoSuchVariableException(rffi.charp2str(LLVMPrintValueToString(var)))
         return NoValue()
 
+    def get_phi_result(self, instruction):
+        ''' Returns the result of a given phi instruction. '''
+        for i in range(LLVMCountIncoming(instruction)):
+            block = LLVMGetIncomingBlock(instruction, i)
+            if block == self.last_block:
+                return self.lookup_var(LLVMGetIncomingValue(instruction, i))
+
+    def get_switch_block(self, args):
+        ''' Returns the block a switch instruction branches to. '''
+
+        cond = self.lookup_var(args[0])
+        default_branch = args[1]
+        assert isinstance(cond, Integer)
+        for i in range(2, len(args), 2):
+            switch_var = self.lookup_var(args[i])
+            assert isinstance(switch_var, Integer)
+            if cond.value == switch_var.value:
+                return BasicBlock(args[i + 1])
+        return BasicBlock(default_branch)
+
     def set_var(self, var, new_value):
         ''' Changes the value of an existing variable. '''
 
@@ -104,22 +124,19 @@ class Interpreter(object):
 
         assert isinstance(val1, Integer) and isinstance(val2, Integer)
         if predicate == LLVMIntSLT:
-            return Boolean(val1.value < val2.value)
+            return Integer(val1.value < val2.value)
         elif predicate == LLVMIntSLE:
-            return Boolean(val1.value <= val2.value)
+            return Integer(val1.value <= val2.value)
         elif predicate == LLVMIntEQ:
-            return Boolean(val1.value == val2.value)
+            return Integer(val1.value == val2.value)
         elif predicate == LLVMIntNE:
-            return Boolean(val1.value != val2.value)
+            return Integer(val1.value != val2.value)
         elif predicate == LLVMIntSGT:
-            return Boolean(val1.value > val2.value)
+            return Integer(val1.value > val2.value)
         elif predicate == LLVMIntSGE:
-            return Boolean(val1.value >= val2.value)
+            return Integer(val1.value >= val2.value)
         else:
             self.exit_not_implemented("Unknown ICmp predicate %d" % predicate)
-
-    def eval_fcondition(self, predicate, val1, val2):
-        self.exit_not_implemented("Unknown ICmp predicate %d" % predicate)
 
     def exec_operation(self, instruction):
         opcode = LLVMGetInstructionOpcode(instruction)
@@ -150,6 +167,10 @@ class Interpreter(object):
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(x.value - y.value)
+        elif opcode == LLVMFSub:
+            x, y = self._get_args(args)
+            assert isinstance(x, Float) and isinstance(y, Float)
+            return Float(x.value - y.value)
         elif opcode == LLVMSDiv:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
@@ -158,10 +179,27 @@ class Interpreter(object):
             x, y = self._get_args(args)
             assert isinstance(x, Float) and isinstance(y, Float)
             return Float(x.value / y.value)
-        elif opcode == LLVMFSub:
+        elif opcode == LLVMSRem:
             x, y = self._get_args(args)
-            assert isinstance(x, Float) and isinstance(y, Float)
-            return Float(x.value - y.value)
+            assert isinstance(x, Integer) and isinstance(y, Integer)
+            return Integer(int(x.value) % int(y.value))
+        elif opcode == LLVMAnd:
+            x, y = self._get_args(args)
+            assert isinstance(x, Integer) and isinstance(y, Integer)
+            return Integer(int(x.value) & int(y.value))
+        elif opcode == LLVMOr:
+            x, y = self._get_args(args)
+            assert isinstance(x, Integer) and isinstance(y, Integer)
+            return Integer(int(x.value) | int(y.value))
+        elif opcode == LLVMXor:
+            x, y = self._get_args(args)
+            assert isinstance(x, Integer) and isinstance(y, Integer)
+            return Integer(int(x.value) ^ int(y.value))
+        elif opcode == LLVMShl:
+            x, y = self._get_args(args)
+            assert isinstance(x, Integer) and isinstance(y, Integer)
+            return Integer(int(x.value) << int(y.value))
+
         elif opcode == LLVMCall:
             if self.has_function(args[-1]):
                 for index in range(LLVMCountParams(args[-1])):
@@ -198,6 +236,10 @@ class Interpreter(object):
             var_val = self.lookup_var(args[0])
             assert isinstance(var_val, Float)
             return Float(var_val.value)
+        elif opcode == LLVMZExt:
+            var_val = self.lookup_var(args[0])
+            assert isinstance(var_val, Integer)
+            return Integer(var_val.value)
         elif opcode == LLVMFPTrunc:
             # truncate a floating point value (double -> float)
             var_val = self.lookup_var(args[0])
@@ -213,7 +255,7 @@ class Interpreter(object):
             # the block to jump to
             if LLVMIsConditional(instruction):
                 cond = self.lookup_var(LLVMGetCondition(instruction))
-                assert isinstance(cond, Boolean)
+                assert isinstance(cond, Integer)
                 if cond.value == True:
                     return BasicBlock(LLVMValueAsBasicBlock(args[2]))
                 else:
@@ -226,11 +268,17 @@ class Interpreter(object):
             val2 = self.lookup_var(args[1])
             predicate = LLVMGetICmpPredicate(instruction)
             return self.eval_condition(predicate, val1, val2)
-        elif opcode == LLVMFCmp:
-            val1 = self.lookup_var(args[0])
-            val2 = self.lookup_var(args[1])
-            predicate = LLVMGetFCmpPredicate(instruction)
-            return self.eval_fcondition(predicate, val1, val2)
+        elif opcode == LLVMPHI:
+            return self.get_phi_result(instruction)
+        elif opcode == LLVMSelect:
+            cond = self.lookup_var(args[0])
+            assert isinstance(cond, Integer)
+            if cond.value != 0:
+                return self.lookup_var(args[1])
+            else:
+                return self.lookup_var(args[2])
+        elif opcode == LLVMSwitch:
+            return self.get_switch_block(args)
         else:
             self.exit_not_implemented("Unknown opcode %d" % opcode)
         return NoValue()
@@ -254,6 +302,7 @@ class Interpreter(object):
                 # last instruction should be ret
                 if not instruction:
                     return value
+            self.last_block = block
             block = next_block
 
 def load_func_table(module):

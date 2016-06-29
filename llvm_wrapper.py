@@ -375,3 +375,37 @@ LLVMGetFCmpPredicate = rffi.llexternal("LLVMGetFCmpPredicate",
                                        [rffi.VOIDP],
                                         rffi.INT,
                                         compilation_info=CConfig._compilation_info_)
+
+LLVMCountIncoming = rffi.llexternal("LLVMCountIncoming",
+                                    [rffi.VOIDP],
+                                     rffi.INT,
+                                     compilation_info=CConfig._compilation_info_)
+
+LLVMGetIncomingValue = rffi.llexternal("LLVMGetIncomingValue",
+                                       [rffi.VOIDP, rffi.INT],
+                                        rffi.VOIDP,
+                                        compilation_info=CConfig._compilation_info_)
+
+LLVMGetIncomingBlock = rffi.llexternal("LLVMGetIncomingBlock",
+                                       [rffi.VOIDP, rffi.INT],
+                                        rffi.VOIDP,
+                                        compilation_info=CConfig._compilation_info_)
+
+<<<<<<< HEAD
+LLVMGetNumSuccessors = rffi.llexternal("LLVMGetNumSuccessors",
+                                       [rffi.VOIDP],
+                                        rffi.INT,
+                                        compilation_info=CConfig._compilation_info_)
+
+LLVMGetSuccessor = rffi.llexternal("LLVMGetSuccessor",
+                                   [rffi.VOIDP, rffi.INT],
+                                    rffi.VOIDP,
+                                    compilation_info=CConfig._compilation_info_)
+
+LLVMGetSwitchDefaultDest = rffi.llexternal("LLVMGetSwitchDefaultDest",
+                                           [rffi.VOIDP],
+                                            rffi.VOIDP,
+                                            compilation_info=CConfig._compilation_info_)
+
+=======
+>>>>>>> 6524a42... Add function wrappers for terminator instructions.
