@@ -11,7 +11,7 @@ class Float(NumericValue):
     def __init__(self, value):
         self.value = value
 
-class Integer(Float):
+class Integer(NumericValue):
     def __init__(self, value):
         self.value = value
 
@@ -38,8 +38,3 @@ class NoValue(Value):
 class BasicBlock(Value):
     def __init__(self, value):
         self.value = value
-
-class Boolean(Value):
-    def __init__(self, value):
-        self.value = value
-
