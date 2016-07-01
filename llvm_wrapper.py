@@ -391,7 +391,6 @@ LLVMGetIncomingBlock = rffi.llexternal("LLVMGetIncomingBlock",
                                         rffi.VOIDP,
                                         compilation_info=CConfig._compilation_info_)
 
-<<<<<<< HEAD
 LLVMGetNumSuccessors = rffi.llexternal("LLVMGetNumSuccessors",
                                        [rffi.VOIDP],
                                         rffi.INT,
@@ -407,5 +406,3 @@ LLVMGetSwitchDefaultDest = rffi.llexternal("LLVMGetSwitchDefaultDest",
                                             rffi.VOIDP,
                                             compilation_info=CConfig._compilation_info_)
 
-=======
->>>>>>> 6524a42... Add function wrappers for terminator instructions.
