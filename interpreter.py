@@ -14,7 +14,7 @@ def jitpolicy(driver):
     from rpython.jit.codewriter.policy import JitPolicy
     return JitPolicy()
 
-jit_driver = jit.JitDriver(greens=["self", "last_block"],
+jit_driver = jit.JitDriver(greens=["self", "block", "function"],
                            reds=[])
 
 class NoSuchVariableException(Exception):
@@ -289,6 +289,8 @@ class Interpreter(object):
 
         block = function.get_first_block()
         while block:
+            jit_driver.jit_merge_point(function=function, block=block, self=self)
+            last_block_loc = self.last_block
             instruction = block.get_first_instruction()
             next_block = block.w_next_block
             while instruction:
