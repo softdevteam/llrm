@@ -2,9 +2,11 @@ from __future__ import with_statement
 from rpython.rlib import jit
 from type_wrapper import String, Integer, Float, Ptr, List,\
                          Value, NoValue, NumericValue, BasicBlock
-from llvm_wrapper import *
+from llvm_objects import W_Module
 from state import State
+from rpython.rtyper.lltypesystem import rffi, lltype
 
+import llvm_wrapper as llwrap
 import sys
 
 def target(*args):
@@ -20,9 +22,6 @@ jit_driver = jit.JitDriver(greens=["self", "block", "function"],
 class NoSuchVariableException(Exception):
     pass
 
-class NoSuchTypeException(Exception):
-    pass
-
 class InvalidFileException(Exception):
     pass
 
@@ -31,10 +30,11 @@ class UnparsableBitcodeException(Exception):
 
 class Interpreter(object):
 
-    def __init__(self, functions, global_state, constants):
-        self.functions = functions
+    def __init__(self, module, global_state, constants):
+        self.module = module
         self.global_state = global_state
         self.constants = constants
+        self.last_block = None
 
     def _get_args(self, args):
         ''' Returns a list of arguments. '''
@@ -68,7 +68,7 @@ class Interpreter(object):
             return self.constants.get_variable(addr)
         else:
             print "[ERROR]: Unknown variable. Exiting."
-            raise NoSuchVariableException(rffi.charp2str(LLVMPrintValueToString(var)))
+            raise NoSuchVariableException(rffi.charp2str(llwrap.LLVMPrintValueToString(var)))
         return NoValue()
 
     def get_phi_result(self, function, instruction):
@@ -76,8 +76,7 @@ class Interpreter(object):
 
         for i in range(instruction.count_incoming):
             l_block = instruction.incoming_block[i]
-            block = function.w_block_dict[rffi.cast(rffi.INT, l_block)]
-            # XXX when are 2 blocks equal?
+            block = function.get_block(l_block)
             if block == self.last_block:
                 return self.lookup_var(instruction.incoming_value[i])
 
@@ -91,10 +90,8 @@ class Interpreter(object):
             switch_var = self.lookup_var(args[i])
             assert isinstance(switch_var, Integer)
             if cond.value == switch_var.value:
-                # return W_Block(args[i + 1]) ?
-                return BasicBlock(function.w_block_dict[rffi.cast(rffi.INT, args[i + 1])])
-        # return W_Block(default_branch)
-        return BasicBlock(function.w_block_dict[rffi.cast(rffi.INT, default_branch)])
+                return BasicBlock(function.get_block(args[i + 1]))
+        return BasicBlock(function.get_block(default_branch))
 
     def set_var(self, var, new_value):
         ''' Changes the value of an existing variable. '''
@@ -107,7 +104,7 @@ class Interpreter(object):
             self.global_state.set_variable(addr, new_value)
         else:
             print "[ERROR]: Unknown variable. Exiting."
-            raise NoSuchVariableException(rffi.charp2str(LLVMPrintValueToString(var)))
+            raise NoSuchVariableException(rffi.charp2str(llwrap.LLVMPrintValueToString(var)))
 
     def has_function(self, function):
         ''' Return true if the file being interpreted contains a given function,
@@ -122,17 +119,17 @@ class Interpreter(object):
             the two arguments, according to an ICmp predicate. '''
 
         assert isinstance(val1, Integer) and isinstance(val2, Integer)
-        if predicate == LLVMIntSLT:
+        if predicate == llwrap.LLVMIntSLT:
             return Integer(val1.value < val2.value)
-        elif predicate == LLVMIntSLE:
+        elif predicate == llwrap.LLVMIntSLE:
             return Integer(val1.value <= val2.value)
-        elif predicate == LLVMIntEQ:
+        elif predicate == llwrap.LLVMIntEQ:
             return Integer(val1.value == val2.value)
-        elif predicate == LLVMIntNE:
+        elif predicate == llwrap.LLVMIntNE:
             return Integer(val1.value != val2.value)
-        elif predicate == LLVMIntSGT:
+        elif predicate == llwrap.LLVMIntSGT:
             return Integer(val1.value > val2.value)
-        elif predicate == LLVMIntSGE:
+        elif predicate == llwrap.LLVMIntSGE:
             return Integer(val1.value >= val2.value)
         else:
             self.exit_not_implemented("Unknown ICmp predicate %d" % predicate)
@@ -140,73 +137,71 @@ class Interpreter(object):
     def exec_operation(self, function, instruction):
         opcode = instruction.opcode
         args = instruction.l_operands
-        if opcode == LLVMRet:
+        if opcode == llwrap.LLVMRet:
             if len(args) == 0:
                 return NoValue()
             else:
                 return self.lookup_var(args[0])
-        elif opcode == LLVMAdd:
+        elif opcode == llwrap.LLVMAdd:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(x.value + y.value)
-        elif opcode == LLVMFAdd:
+        elif opcode == llwrap.LLVMFAdd:
             x, y = self._get_args(args)
             assert isinstance(x, Float) and isinstance(y, Float)
             return Float(x.value + y.value)
-        elif opcode == LLVMMul:
+        elif opcode == llwrap.LLVMMul:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(x.value * y.value)
-        elif opcode == LLVMFMul:
+        elif opcode == llwrap.LLVMFMul:
             x, y = self._get_args(args)
             assert isinstance(x, Float) and isinstance(y, Float)
             return Float(x.value * y.value)
-        elif opcode == LLVMSub:
+        elif opcode == llwrap.LLVMSub:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(x.value - y.value)
-        elif opcode == LLVMFSub:
+        elif opcode == llwrap.LLVMFSub:
             x, y = self._get_args(args)
             assert isinstance(x, Float) and isinstance(y, Float)
             return Float(x.value - y.value)
-        elif opcode == LLVMSDiv:
+        elif opcode == llwrap.LLVMSDiv:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(x.value / y.value)
-        elif opcode == LLVMFDiv:
+        elif opcode == llwrap.LLVMFDiv:
             x, y = self._get_args(args)
             assert isinstance(x, Float) and isinstance(y, Float)
             return Float(x.value / y.value)
-        elif opcode == LLVMSRem:
+        elif opcode == llwrap.LLVMSRem:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(int(x.value) % int(y.value))
-        elif opcode == LLVMAnd:
+        elif opcode == llwrap.LLVMAnd:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(int(x.value) & int(y.value))
-        elif opcode == LLVMOr:
+        elif opcode == llwrap.LLVMOr:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(int(x.value) | int(y.value))
-        elif opcode == LLVMXor:
+        elif opcode == llwrap.LLVMXor:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(int(x.value) ^ int(y.value))
-        elif opcode == LLVMShl:
+        elif opcode == llwrap.LLVMShl:
             x, y = self._get_args(args)
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(int(x.value) << int(y.value))
-
-        elif opcode == LLVMCall:
-            if instruction.l_function is not None and self.has_function(instruction.l_function):
+        elif opcode == llwrap.LLVMCall:
+            if self.module.has_function(args[-1]):
                 for index in range(instruction.func_param_count):
                     param = instruction.l_func_params[index]
                     self.global_state.set_variable(rffi.cast(rffi.INT, param),\
                                                    self.lookup_var(args[index]))
-                interp_fun = Interpreter(self.functions, self.global_state, self.constants)
-
-                func = self.functions[rffi.cast(rffi.INT, instruction.l_function)]
+                interp_fun = Interpreter(self.module, self.global_state, self.constants)
+                func = self.module.get_function(args[-1])
                 return interp_fun.run(func)
             else:
                 string_format_ref = instruction.l_string_format_ref
@@ -223,62 +218,61 @@ class Interpreter(object):
                     self.puts(string_format, printf_args)
                 else:
                     self.exit_not_implemented(fn_name)
-        elif opcode == LLVMAlloca:
+        elif opcode == llwrap.LLVMAlloca:
             return Ptr(lltype.scoped_alloc(rffi.VOIDP.TO, 1))
-        elif opcode == LLVMStore:
+        elif opcode == llwrap.LLVMStore:
             # store arg[0] in arg[1]
             var = self.lookup_var(args[0])
             self.set_var(args[1], var)
-        elif opcode == LLVMLoad:
+        elif opcode == llwrap.LLVMLoad:
             return self.lookup_var(args[0])
-        elif opcode == LLVMFPExt:
+        elif opcode == llwrap.LLVMFPExt:
             # extend a floating point value (eg float -> double)
             var_val = self.lookup_var(args[0])
             assert isinstance(var_val, Float)
             return Float(var_val.value)
-        elif opcode == LLVMZExt:
+        elif opcode == llwrap.LLVMZExt:
             var_val = self.lookup_var(args[0])
             assert isinstance(var_val, Integer)
             return Integer(var_val.value)
-        elif opcode == LLVMFPTrunc:
+        elif opcode == llwrap.LLVMFPTrunc:
             # truncate a floating point value (double -> float)
             var_val = self.lookup_var(args[0])
             assert isinstance(var_val, Float)
             return Float(var_val.value)
-        elif opcode == LLVMSIToFP:
+        elif opcode == llwrap.LLVMSIToFP:
             # convert Signed to Floating Point
             var_val = self.lookup_var(args[0])
             assert isinstance(var_val, Integer)
             return Float(float(var_val.value))
-        elif opcode == LLVMBr:
+        elif opcode == llwrap.LLVMBr:
             # if the jump is conditional, it's necessary to find
             # the block to jump to
-            #if LLVMIsConditional(instruction):
-            if instruction.is_conditional:
+            if instruction.is_conditional():
                 cond = self.lookup_var(instruction.condition)
                 assert isinstance(cond, Integer)
                 if cond.value == True:
-                    return BasicBlock(function.w_block_dict[rffi.cast(rffi.INT, instruction.l_bb_true)])
+                    return BasicBlock(function.get_block(instruction.l_bb_true))
                 else:
-                    return BasicBlock(function.w_block_dict[rffi.cast(rffi.INT, instruction.l_bb_false)])
+                    return BasicBlock(function.get_block(instruction.l_bb_false))
             else:
                 # unconditional jump
-                return BasicBlock(function.w_block_dict[rffi.cast(rffi.INT, instruction.l_bb_uncond)])
-        elif opcode == LLVMICmp:
+                return BasicBlock(function.get_block(instruction.l_bb_uncond))
+        elif opcode == llwrap.LLVMICmp:
             val1 = self.lookup_var(args[0])
             val2 = self.lookup_var(args[1])
             predicate = instruction.icmp_predicate
             return self.eval_condition(predicate, val1, val2)
-        elif opcode == LLVMPHI:
+        elif opcode == llwrap.LLVMPHI:
             return self.get_phi_result(function, instruction)
-        elif opcode == LLVMSelect:
+        elif opcode == llwrap.LLVMSelect:
             cond = self.lookup_var(args[0])
             assert isinstance(cond, Integer)
             if cond.value != 0:
                 return self.lookup_var(args[1])
             else:
                 return self.lookup_var(args[2])
-        elif opcode == LLVMSwitch:
+        elif opcode == llwrap.LLVMSwitch:
             return self.get_switch_block(function, args)
         else:
             self.exit_not_implemented("Unknown opcode %d" % opcode)
@@ -286,7 +280,6 @@ class Interpreter(object):
 
     def run(self, function):
         self.frame = State()
-
         block = function.get_first_block()
         while block:
             jit_driver.jit_merge_point(function=function, block=block, self=self)
@@ -299,7 +292,7 @@ class Interpreter(object):
                     next_block = result.value
                     break
                 elif not isinstance(result, NoValue):
-                    self.frame.set_variable(rffi.cast(rffi.INT, instruction.l_instr), result)
+                    self.frame.set_variable(instruction.addr, result)
                 instruction = instruction.w_next_instr
                 # last instruction should be ret
                 if not instruction:
@@ -307,21 +300,16 @@ class Interpreter(object):
             self.last_block = block
             block = next_block
 
-def load_globals(module, global_state, main_argc, main_argv):
-    ''' Loads the global variables for the interpreter, including
-        the argc and argv. '''
-
-    return module.load_globals(global_state, main_argc, main_argv)
-
 def create_module(filename):
-    ''' Returns the module created with the contents of the given file. '''
+    ''' Returns the module created with the contents of the given file
+        as a W_Module object. '''
 
-    module = LLVMModuleCreateWithName("module")
+    module = llwrap.LLVMModuleCreateWithName("module")
     with lltype.scoped_alloc(rffi.CCHARPP.TO, 1) as out_message:
         with lltype.scoped_alloc(rffi.VOIDP.TO, 1) as mem_buff:
             with lltype.scoped_alloc(rffi.VOIDPP.TO, 1) as mem_buff_ptr:
                 mem_buff_ptr[0] = mem_buff
-                rc = LLVMCreateMemoryBufferWithContentsOfFile(filename, mem_buff_ptr, out_message)
+                rc = llwrap.LLVMCreateMemoryBufferWithContentsOfFile(filename, mem_buff_ptr, out_message)
                 if rc != 0:
                     print"[ERROR]: Cannot create memory buffer with contents of"\
                          " %s: %s.\n" % (filename, rffi.charp2str(out_message[0]))
@@ -330,7 +318,7 @@ def create_module(filename):
 
             with lltype.scoped_alloc(rffi.VOIDPP.TO, 1) as module_ptr:
                 module_ptr[0] = module
-                rc = LLVMParseBitcode(mem_buff, module_ptr, out_message)
+                rc = llwrap.LLVMParseBitcode(mem_buff, module_ptr, out_message)
                 if rc != 0:
                     print "[ERROR]: Cannot parse %s: %s.\n" % (filename, rffi.charp2str(out_message[0]))
                     raise UnparsableBitcodeException(filename)
@@ -345,8 +333,8 @@ def main(args):
     main_argc = len(args) - 1
     main_argv = args[1:]
     global_state = State()
-    load_globals(module, global_state, main_argc, main_argv)
-    interp = Interpreter(module.w_functions, global_state, module.constants)
+    module.load_globals(global_state, main_argc, main_argv)
+    interp = Interpreter(module, global_state, module.constants)
     interp.run(module.w_main_fun)
     return 0
 

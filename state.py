@@ -1,4 +1,5 @@
-from type_wrapper import *
+from type_wrapper import Integer, Value
+from rpython.rlib import jit
 
 class State(object):
     ''' Represents the state of a stack frame or of the entire program. '''
@@ -13,6 +14,7 @@ class State(object):
         off = self.get_variable_off(name)
         return self.vars[off]
 
+    @jit.elidable_promote()
     def get_variable_off(self, name):
         ''' Returns the offset of the specified local variable. '''
 
