@@ -406,3 +406,7 @@ LLVMGetSwitchDefaultDest = rffi.llexternal("LLVMGetSwitchDefaultDest",
                                             rffi.VOIDP,
                                             compilation_info=CConfig._compilation_info_)
 
+LLVMIsUndef = rffi.llexternal("LLVMIsUndef",
+                              [rffi.VOIDP],
+                               rffi.INT,
+                               compilation_info=CConfig._compilation_info_)

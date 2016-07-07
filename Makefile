@@ -20,7 +20,7 @@ interpreter-c: interpreter.py
 	$(PYTHONPATH) -O0 interpreter.py
 
 benchmark: interpreter-c fibonacci_rec.bc fibonacci_iter.bc
-	./multitime -n5 ./interpreter-c fibonacci_rec.bc
-	./multitime -n5 ./interpreter-c fibonacci_iter.bc
+	./multitime -n5 -q ./interpreter-c fibonacci_rec.bc
+	./multitime -n5 -q ./interpreter-c fibonacci_iter.bc
 clean:
 	-rm -f *.bc *.o *.ll *.s test fibonacci_rec fibonacci_iter
