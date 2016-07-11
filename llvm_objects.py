@@ -8,6 +8,8 @@ import llvm_wrapper as llwrap
 class W_Module(object):
     ''' Represents a wrapper for an LLVMModuleRef. '''
 
+    _immutable_fields_ = ['w_main_fun', 'l_module']
+
     def __init__(self, l_module):
         self.constants = State()
         self.l_module = l_module
@@ -87,6 +89,8 @@ class W_Module(object):
 class W_Function(object):
     ''' Represents a wrapper for an LLVMValueRef that is a function. '''
 
+    _immutable_fields_ = ['name']
+
     def __init__(self, l_function, w_module):
         self.block_offsets = {}
         self.w_blocks = []
@@ -146,6 +150,8 @@ class W_Function(object):
 class W_Block(object):
     ''' Represents a wrapper for an LLVMBasicBlockRef. '''
 
+    _immutable_fields_ = ['w_next_block', 'l_value']
+
     def __init__(self, l_block, w_module):
         self.w_instructions = self._get_instructions(l_block, w_module)
         self.w_next_block = None
@@ -178,6 +184,10 @@ class W_Block(object):
 
 class W_BaseInstruction(object):
     ''' Represents a wrapper for an LLVMValueRef that is an instruction. '''
+
+    _attrs_ = ['addr', 'l_operands', 'opcode', 'w_next_instr', 'name']
+    _immutable_fields_ = ['addr', 'l_operands[*]', 'opcode', 'w_next_instr',\
+                          'name']
 
     def __init__(self, l_instr, w_module):
         self.addr = rffi.cast(rffi.INT, l_instr)
@@ -220,6 +230,8 @@ class W_BaseInstruction(object):
 class W_BrInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a br instruction. '''
 
+    _immutable_fields_ = ['l_bb_uncond']
+
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
         self.l_bb_uncond = llwrap.LLVMValueAsBasicBlock(self.l_operands[0])
@@ -227,6 +239,8 @@ class W_BrInstruction(W_BaseInstruction):
 class W_ConditionalInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a conditional
         br instruction. '''
+
+    _immutable_fields_ = ['condition', 'l_bb_true', 'l_bb_false']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
@@ -238,6 +252,8 @@ class W_ICmpInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is an icmp
         instruction. '''
 
+    _immutable_fields_ = ['icmp_predicate']
+
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
         self.icmp_predicate = llwrap.LLVMGetICmpPredicate(l_instr)
@@ -245,6 +261,8 @@ class W_ICmpInstruction(W_BaseInstruction):
 class W_PhiInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a phi
         instruction. '''
+
+    _immutable_fields_ = ['count_incoming']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
@@ -258,6 +276,8 @@ class W_PhiInstruction(W_BaseInstruction):
 class W_CallInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a call
         instruction. '''
+
+    _immutable_fields_ = ['func_param_count', 'l_string_format_ref']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)

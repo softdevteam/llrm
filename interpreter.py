@@ -2,7 +2,9 @@ from __future__ import with_statement
 from rpython.rlib import jit
 from type_wrapper import String, Integer, Float, Ptr, List,\
                          Value, NoValue, NumericValue, BasicBlock
-from llvm_objects import W_Module
+from llvm_objects import W_Module, W_BrInstruction, W_PhiInstruction,\
+                         W_CallInstruction, W_ConditionalInstruction,\
+                         W_ICmpInstruction
 from state import State
 from rpython.rtyper.lltypesystem import rffi, lltype
 
@@ -79,6 +81,7 @@ class Interpreter(object):
     def get_phi_result(self, function, instruction):
         ''' Returns the result of a given phi instruction. '''
 
+        assert isinstance(instruction, W_PhiInstruction)
         for i in range(instruction.count_incoming):
             l_block = instruction.incoming_block[i]
             block = function.get_block(l_block)
@@ -139,6 +142,7 @@ class Interpreter(object):
         else:
             self.exit_not_implemented("Unknown ICmp predicate %d" % predicate)
 
+    @jit.unroll_safe
     def exec_operation(self, function, instruction):
         opcode = instruction.opcode
         args = instruction.l_operands
@@ -201,6 +205,7 @@ class Interpreter(object):
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(int(x.value) << int(y.value))
         elif opcode == llwrap.LLVMCall:
+            assert isinstance(instruction, W_CallInstruction)
             if self.module.has_function(args[-1]):
                 for index in range(instruction.func_param_count):
                     param = instruction.l_func_params[index]
@@ -255,6 +260,7 @@ class Interpreter(object):
             # if the jump is conditional, it's necessary to find
             # the block to jump to
             if instruction.is_conditional():
+                assert isinstance(instruction, W_ConditionalInstruction)
                 cond = self.lookup_var(instruction.condition)
                 assert isinstance(cond, Integer)
                 if cond.value == True:
@@ -263,10 +269,12 @@ class Interpreter(object):
                     return BasicBlock(function.get_block(instruction.l_bb_false))
             else:
                 # unconditional jump
+                assert isinstance(instruction, W_BrInstruction)
                 return BasicBlock(function.get_block(instruction.l_bb_uncond))
         elif opcode == llwrap.LLVMICmp:
             val1 = self.lookup_var(args[0])
             val2 = self.lookup_var(args[1])
+            assert isinstance(instruction, W_ICmpInstruction)
             predicate = instruction.icmp_predicate
             return self.eval_condition(predicate, val1, val2)
         elif opcode == llwrap.LLVMPHI:
