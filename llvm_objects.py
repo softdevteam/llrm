@@ -91,6 +91,7 @@ class W_Function(object):
         self.block_offsets = {}
         self.w_blocks = []
         self._initialize_blocks(l_function, w_module)
+        self.name = rffi.charp2str(llwrap.LLVMGetValueName(l_function))
 
     def _initialize_blocks(self, l_function, w_module):
         l_block = llwrap.LLVMGetFirstBasicBlock(l_function)
@@ -183,6 +184,7 @@ class W_BaseInstruction(object):
         self.l_operands = self._get_operands(l_instr, w_module)
         self.opcode = llwrap.LLVMGetInstructionOpcode(l_instr)
         self.w_next_instr = None
+        self.name = rffi.charp2str(llwrap.LLVMPrintValueToString(l_instr))
 
     def is_conditional(self):
         ''' Checks if this instruction is a conditional instruction. '''

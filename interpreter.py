@@ -16,8 +16,12 @@ def jitpolicy(driver):
     from rpython.jit.codewriter.policy import JitPolicy
     return JitPolicy()
 
+def get_location(interpreter, block, function):
+    return "%s: %s" % (function.name, interpreter.current_instruction.name)
+
 jit_driver = jit.JitDriver(greens=["self", "block", "function"],
-                           reds=[])
+                           reds=[],
+                           get_printable_location=get_location)
 
 class NoSuchVariableException(Exception):
     pass
@@ -35,6 +39,7 @@ class Interpreter(object):
         self.global_state = global_state
         self.constants = constants
         self.last_block = None
+        self.current_instruction = None
 
     def _get_args(self, args):
         ''' Returns a list of arguments. '''
@@ -137,6 +142,7 @@ class Interpreter(object):
     def exec_operation(self, function, instruction):
         opcode = instruction.opcode
         args = instruction.l_operands
+        self.current_instruction = instruction
         if opcode == llwrap.LLVMRet:
             if len(args) == 0:
                 return NoValue()
