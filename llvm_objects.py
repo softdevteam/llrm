@@ -11,7 +11,6 @@ class W_Module(object):
     _immutable_fields_ = ['w_main_fun', 'l_module']
 
     def __init__(self, l_module):
-        self.constants = State()
         self.l_module = l_module
         self.function_offsets = {}
         self.w_functions = []
@@ -96,6 +95,7 @@ class W_Function(object):
         self.w_blocks = []
         self._initialize_blocks(l_function, w_module)
         self.name = rffi.charp2str(llwrap.LLVMGetValueName(l_function))
+        self._set_instr_blocks()
 
     def _initialize_blocks(self, l_function, w_module):
         l_block = llwrap.LLVMGetFirstBasicBlock(l_function)
@@ -113,6 +113,36 @@ class W_Function(object):
         offset = self._get_block_off(addr)
         self.w_blocks[offset] = w_block
 
+    def _set_instr_blocks(self):
+        block = self.get_first_block()
+        while block:
+            instruction = block.get_first_instruction()
+            while instruction:
+                if isinstance(instruction, W_PhiInstruction):
+                    incoming_block = []
+                    for i in range(instruction.count_incoming):
+                        l_block = llwrap.LLVMGetIncomingBlock(instruction.l_instr, i)
+                        w_block = self.get_block(l_block)
+                        incoming_block.append(w_block)
+                    instruction.incoming_block = incoming_block[:]
+                elif isinstance(instruction, W_BrInstruction):
+                    l_block = llwrap.LLVMValueAsBasicBlock(instruction.operands[0].l_value)
+                    instruction.w_bb_uncond = self.get_block(l_block)
+                elif isinstance(instruction, W_ConditionalInstruction):
+                    l_block_true = llwrap.LLVMValueAsBasicBlock(instruction.operands[2].l_value)
+                    l_block_false = llwrap.LLVMValueAsBasicBlock(instruction.operands[1].l_value)
+                    instruction.w_bb_true = self.get_block(l_block_true)
+                    instruction.w_bb_false = self.get_block(l_block_false)
+                elif isinstance(instruction, W_SwitchInstruction):
+                    instruction.default_branch = self.get_block(instruction.operands[1].l_value)
+                    w_blocks = []
+                    for i in range(3, len(instruction.operands), 2):
+                        w_blocks.append(self.get_block(instruction.operands[i].l_value))
+                    instruction.w_blocks = w_blocks[:]
+                instruction = instruction.w_next_instr
+            block = block.w_next_block
+
+    @jit.elidable_promote()
     def get_block(self, l_block):
         ''' Returns the W_Block representation of a given block of
             this function.'''
@@ -122,7 +152,11 @@ class W_Function(object):
             offset = self._get_block_off(addr)
             return self.w_blocks[offset]
         else:
-            raise LookupError(rffi.charp2str(llwrap.LLVMPrintValueToString(l_block)))
+            raise LookupError(self._get_block_string(l_block))
+
+    @jit.elidable_promote()
+    def _get_block_string(self, l_block):
+        return rffi.charp2str(llwrap.LLVMPrintValueToString(l_block))
 
     @jit.elidable_promote()
     def _get_block_off(self, l_block):
@@ -150,7 +184,7 @@ class W_Function(object):
 class W_Block(object):
     ''' Represents a wrapper for an LLVMBasicBlockRef. '''
 
-    _immutable_fields_ = ['w_next_block', 'l_value']
+    _immutable_fields_ = ['w_next_block', 'l_value', 'w_instructions[*]']
 
     def __init__(self, l_block, w_module):
         self.w_instructions = self._get_instructions(l_block, w_module)
@@ -169,7 +203,7 @@ class W_Block(object):
             prev = current_instr
             w_instrs.append(current_instr)
             l_instr = llwrap.LLVMGetNextInstruction(l_instr)
-        return w_instrs
+        return w_instrs[:]
 
     def get_first_instruction(self):
         ''' Returns the first instruction in this basic block. '''
@@ -185,13 +219,13 @@ class W_Block(object):
 class W_BaseInstruction(object):
     ''' Represents a wrapper for an LLVMValueRef that is an instruction. '''
 
-    _attrs_ = ['addr', 'l_operands', 'opcode', 'w_next_instr', 'name']
-    _immutable_fields_ = ['addr', 'l_operands[*]', 'opcode', 'w_next_instr',\
+    _attrs_ = ['addr', 'operands', 'opcode', 'w_next_instr', 'name']
+    _immutable_fields_ = ['addr', 'operands[*]', 'opcode', 'w_next_instr',\
                           'name']
 
     def __init__(self, l_instr, w_module):
         self.addr = rffi.cast(rffi.INT, l_instr)
-        self.l_operands = self._get_operands(l_instr, w_module)
+        self.operands = self._get_operands(l_instr, w_module)
         self.opcode = llwrap.LLVMGetInstructionOpcode(l_instr)
         self.w_next_instr = None
         self.name = rffi.charp2str(llwrap.LLVMPrintValueToString(l_instr))
@@ -208,45 +242,29 @@ class W_BaseInstruction(object):
         args = []
         for i in range(llwrap.LLVMGetNumOperands(l_instr)):
             arg = llwrap.LLVMGetOperand(l_instr, i)
-            args.append(arg)
-            if llwrap.LLVMIsConstant(arg):
-                addr = rffi.cast(rffi.INT, arg)
-                var_type = llwrap.LLVMGetTypeKind(llwrap.LLVMTypeOf(arg))
-                if var_type == llwrap.LLVMIntegerTypeKind:
-                    if llwrap.LLVMIsUndef(arg):
-                        # XXX undefined vars -- currently set to 0
-                        w_module.constants.set_variable(addr, Integer(0))
-                    else:
-                        w_module.constants.set_variable(addr, Integer(llwrap.LLVMConstIntGetSExtValue(arg)))
-                elif var_type == llwrap.LLVMDoubleTypeKind or var_type == llwrap.LLVMFloatTypeKind:
-                    if llwrap.LLVMIsUndef(arg):
-                        w_module.constants.set_variable(addr, Float(0.0))
-                    else:
-                        with lltype.scoped_alloc(rffi.SIGNEDP.TO, 1) as signed_ptr:
-                            fl_var = Float(llwrap.LLVMConstRealGetDouble(arg, signed_ptr))
-                            w_module.constants.set_variable(addr, fl_var)
+            args.append(_get_variable_wrapper(arg))
         return args
 
 class W_BrInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a br instruction. '''
 
-    _immutable_fields_ = ['l_bb_uncond']
+    _immutable_fields_ = ['w_bb_uncond']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
-        self.l_bb_uncond = llwrap.LLVMValueAsBasicBlock(self.l_operands[0])
+        self.w_bb_uncond = None
 
 class W_ConditionalInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a conditional
         br instruction. '''
 
-    _immutable_fields_ = ['condition', 'l_bb_true', 'l_bb_false']
+    _immutable_fields_ = ['condition', 'w_bb_true', 'w_bb_false']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
-        self.condition = llwrap.LLVMGetCondition(l_instr)
-        self.l_bb_true = llwrap.LLVMValueAsBasicBlock(self.l_operands[2])
-        self.l_bb_false = llwrap.LLVMValueAsBasicBlock(self.l_operands[1])
+        self.condition = _get_variable_wrapper(llwrap.LLVMGetCondition(l_instr))
+        self.l_bb_true = llwrap.LLVMValueAsBasicBlock(self.operands[2].l_value)
+        self.l_bb_false = llwrap.LLVMValueAsBasicBlock(self.operands[1].l_value)
 
 class W_ICmpInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is an icmp
@@ -262,35 +280,48 @@ class W_PhiInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a phi
         instruction. '''
 
-    _immutable_fields_ = ['count_incoming']
+    _immutable_fields_ = ['l_instr', 'count_incoming', 'incoming_block[*]', 'incoming_value[*]']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
+        self.l_instr = l_instr
         self.count_incoming = llwrap.LLVMCountIncoming(l_instr)
-        self.incoming_block = []
-        self.incoming_value = []
+        self.incoming_block = None
+        self.incoming_value = self._get_incoming_value(l_instr)
+
+    def _get_incoming_value(self, l_instr):
+        incoming_value = []
         for i in range(self.count_incoming):
-            self.incoming_block.append(llwrap.LLVMGetIncomingBlock(l_instr, i))
-            self.incoming_value.append(llwrap.LLVMGetIncomingValue(l_instr, i))
+            incoming_value.append(_get_variable_wrapper(llwrap.LLVMGetIncomingValue(l_instr, i)))
+        return incoming_value[:]
 
 class W_CallInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a call
         instruction. '''
 
-    _immutable_fields_ = ['func_param_count', 'l_string_format_ref']
+    _immutable_fields_ = ['func_param_count', 'string_format_ref']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
-        if not llwrap.LLVMIsDeclaration(self.l_operands[-1]):
-            self.func_param_count = llwrap.LLVMCountParams(self.l_operands[-1])
+        if not llwrap.LLVMIsDeclaration(self.operands[-1].l_value):
+            self.func_param_count = llwrap.LLVMCountParams(self.operands[-1].l_value)
             self.l_func_params = []
             for index in range(self.func_param_count):
-                self.l_func_params.append(llwrap.LLVMGetParam(self.l_operands[-1], index))
+                self.l_func_params.append(_get_variable_wrapper(llwrap.LLVMGetParam(self.operands[-1].l_value, index)))
         else:
             # assume the instruction is either printf or puts (this is checked by the
             # the interpreter)
-            self.l_string_format_ref = llwrap.LLVMGetOperand(self.l_operands[0], 0)
-            self.func_name = rffi.charp2str(llwrap.LLVMGetValueName(self.l_operands[-1]))
+            self.string_format_ref = _get_variable_wrapper(llwrap.LLVMGetOperand(self.operands[0].l_value, 0))
+            self.func_name = rffi.charp2str(llwrap.LLVMGetValueName(self.operands[-1].l_value))
+
+class W_SwitchInstruction(W_BaseInstruction):
+
+    _attrs_ = ['default_branch', 'w_blocks']
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+        self.default_branch = None
+        self.w_blocks = None
 
 def _get_instruction(opcode, l_instruction, w_module):
     ''' Returns the appropriate wrapper for the specified instruction. '''
@@ -306,5 +337,60 @@ def _get_instruction(opcode, l_instruction, w_module):
         return W_PhiInstruction(l_instruction, w_module)
     elif opcode == llwrap.LLVMCall:
         return W_CallInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMSwitch:
+        return W_SwitchInstruction(l_instruction, w_module)
     else:
         return W_BaseInstruction(l_instruction, w_module)
+
+class Variable(object):
+
+    _attrs_ = ['addr', 'l_value']
+
+    def __init__(self, l_value):
+        self.addr = rffi.cast(rffi.INT, l_value)
+        self.l_value = l_value
+
+class LocalVariable(Variable):
+
+    _attrs_ = ['content']
+
+    def __init__(self, content, l_value):
+        Variable.__init__(self, l_value)
+        self.content = content
+
+class GlobalVariable(Variable):
+
+    _attrs_ = ['content']
+
+    def __init__(self, content, l_value):
+        Variable.__init__(self, l_value)
+        self.content = content
+
+class Constant(Variable):
+
+    _attrs_ = ['content']
+
+    def __init__(self, content, l_value):
+        Variable.__init__(self, l_value)
+        self.content = content
+
+def _get_variable_wrapper(l_val):
+    ''' Returns the correct variable wrapper for a given LLVMValueRef. '''
+
+    value = Variable(l_val)
+    if llwrap.LLVMIsConstant(l_val):
+        val_type = llwrap.LLVMGetTypeKind(llwrap.LLVMTypeOf(l_val))
+        if val_type == llwrap.LLVMIntegerTypeKind:
+            if llwrap.LLVMIsUndef(l_val):
+                value = Constant(Integer(0), l_val)
+            else:
+                value = Constant(Integer(llwrap.LLVMConstIntGetSExtValue(l_val)),
+                                 l_val)
+        elif val_type == llwrap.LLVMDoubleTypeKind or val_type == llwrap.LLVMFloatTypeKind:
+            if llwrap.LLVMIsUndef(l_val):
+                value = Constant(Float(0.0), l_val)
+            else:
+                with lltype.scoped_alloc(rffi.SIGNEDP.TO, 1) as signed_ptr:
+                    fl_var = Float(llwrap.LLVMConstRealGetDouble(l_val, signed_ptr))
+                    value = Constant(fl_var, l_val)
+    return value
