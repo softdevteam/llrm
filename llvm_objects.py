@@ -187,7 +187,7 @@ class W_Block(object):
     _immutable_fields_ = ['w_next_block', 'l_value', 'w_instructions[*]']
 
     def __init__(self, l_block, w_module):
-        self.w_instructions = self._get_instructions(l_block, w_module)
+        self.w_instructions = self._get_instructions(l_block, w_module)[:]
         self.w_next_block = None
         self.l_value = llwrap.LLVMValueAsBasicBlock(l_block)
 
@@ -203,7 +203,7 @@ class W_Block(object):
             prev = current_instr
             w_instrs.append(current_instr)
             l_instr = llwrap.LLVMGetNextInstruction(l_instr)
-        return w_instrs[:]
+        return w_instrs
 
     def get_first_instruction(self):
         ''' Returns the first instruction in this basic block. '''
@@ -219,7 +219,6 @@ class W_Block(object):
 class W_BaseInstruction(object):
     ''' Represents a wrapper for an LLVMValueRef that is an instruction. '''
 
-    _attrs_ = ['addr', 'operands', 'opcode', 'w_next_instr', 'name']
     _immutable_fields_ = ['addr', 'operands[*]', 'opcode', 'w_next_instr',\
                           'name']
 
@@ -247,8 +246,6 @@ class W_BaseInstruction(object):
 
 class W_BrInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a br instruction. '''
-
-    _immutable_fields_ = ['w_bb_uncond']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
@@ -280,20 +277,19 @@ class W_PhiInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a phi
         instruction. '''
 
-    _immutable_fields_ = ['l_instr', 'count_incoming', 'incoming_block[*]', 'incoming_value[*]']
+    _immutable_fields_ = ['l_instr', 'count_incoming', 'incoming_block[*]',
+                          'incoming_value[*]']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
         self.l_instr = l_instr
         self.count_incoming = llwrap.LLVMCountIncoming(l_instr)
         self.incoming_block = None
-        self.incoming_value = self._get_incoming_value(l_instr)
-
-    def _get_incoming_value(self, l_instr):
         incoming_value = []
         for i in range(self.count_incoming):
-            incoming_value.append(_get_variable_wrapper(llwrap.LLVMGetIncomingValue(l_instr, i)))
-        return incoming_value[:]
+            wrapped_var = _get_variable_wrapper(llwrap.LLVMGetIncomingValue(l_instr, i))
+            incoming_value.append(wrapped_var)
+        self.incoming_value =  incoming_value[:]
 
 class W_CallInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a call
@@ -307,7 +303,8 @@ class W_CallInstruction(W_BaseInstruction):
             self.func_param_count = llwrap.LLVMCountParams(self.operands[-1].l_value)
             self.l_func_params = []
             for index in range(self.func_param_count):
-                self.l_func_params.append(_get_variable_wrapper(llwrap.LLVMGetParam(self.operands[-1].l_value, index)))
+                wrapped_var = _get_variable_wrapper(llwrap.LLVMGetParam(self.operands[-1].l_value, index))
+                self.l_func_params.append(wrapped_var)
         else:
             # assume the instruction is either printf or puts (this is checked by the
             # the interpreter)
@@ -315,8 +312,6 @@ class W_CallInstruction(W_BaseInstruction):
             self.func_name = rffi.charp2str(llwrap.LLVMGetValueName(self.operands[-1].l_value))
 
 class W_SwitchInstruction(W_BaseInstruction):
-
-    _attrs_ = ['default_branch', 'w_blocks']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
@@ -344,15 +339,11 @@ def _get_instruction(opcode, l_instruction, w_module):
 
 class Variable(object):
 
-    _attrs_ = ['addr', 'l_value']
-
     def __init__(self, l_value):
         self.addr = rffi.cast(rffi.INT, l_value)
         self.l_value = l_value
 
 class LocalVariable(Variable):
-
-    _attrs_ = ['content']
 
     def __init__(self, content, l_value):
         Variable.__init__(self, l_value)
@@ -360,15 +351,11 @@ class LocalVariable(Variable):
 
 class GlobalVariable(Variable):
 
-    _attrs_ = ['content']
-
     def __init__(self, content, l_value):
         Variable.__init__(self, l_value)
         self.content = content
 
 class Constant(Variable):
-
-    _attrs_ = ['content']
 
     def __init__(self, content, l_value):
         Variable.__init__(self, l_value)
