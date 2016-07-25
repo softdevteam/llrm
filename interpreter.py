@@ -2,11 +2,14 @@ from __future__ import with_statement
 from rpython.rlib import jit
 from type_wrapper import String, Integer, Float, Ptr, List,\
                          Value, NoValue, NumericValue, BasicBlock
-from llvm_objects import W_Module
+from llvm_objects import W_Module, W_BrInstruction, W_PhiInstruction,\
+                         W_CallInstruction, W_ConditionalInstruction,\
+                         W_ICmpInstruction, W_SwitchInstruction
 from state import State
 from rpython.rtyper.lltypesystem import rffi, lltype
 
 import llvm_wrapper as llwrap
+import llvm_objects
 import sys
 
 def target(*args):
@@ -16,8 +19,12 @@ def jitpolicy(driver):
     from rpython.jit.codewriter.policy import JitPolicy
     return JitPolicy()
 
+def get_printable_location(interpreter, block, function):
+    return "%s: %s" % (function.name, interpreter.current_instruction.name)
+
 jit_driver = jit.JitDriver(greens=["self", "block", "function"],
-                           reds=[])
+                           reds=[],
+                           get_printable_location=get_printable_location)
 
 class NoSuchVariableException(Exception):
     pass
@@ -30,12 +37,13 @@ class UnparsableBitcodeException(Exception):
 
 class Interpreter(object):
 
-    def __init__(self, module, global_state, constants):
+    def __init__(self, module, global_state):
         self.module = module
         self.global_state = global_state
-        self.constants = constants
         self.last_block = None
+        self.current_instruction = None
 
+    @jit.unroll_safe
     def _get_args(self, args):
         ''' Returns a list of arguments. '''
 
@@ -59,42 +67,41 @@ class Interpreter(object):
     def lookup_var(self, var):
         ''' Returns the value of a variable. First checks locals, then globals. '''
 
-        addr = rffi.cast(rffi.INT, var)
-        if self.frame.has_key(addr):
-            return self.frame.get_variable(addr)
-        elif self.global_state.has_key(addr):
-            return self.global_state.get_variable(addr)
-        elif self.constants.has_key(addr):
-            return self.constants.get_variable(addr)
+        if isinstance(var, llvm_objects.Constant):
+            return var.content
+        elif self.frame.has_key(var.addr):
+            return self.frame.get_variable(var.addr)
+        elif self.global_state.has_key(var.addr):
+            return self.global_state.get_variable(var.addr)
         else:
             print "[ERROR]: Unknown variable. Exiting."
-            raise NoSuchVariableException(rffi.charp2str(llwrap.LLVMPrintValueToString(var)))
-        return NoValue()
+            raise NoSuchVariableException(rffi.charp2str(llwrap.LLVMPrintValueToString(var.l_value)))
 
+    @jit.unroll_safe
     def get_phi_result(self, function, instruction):
         ''' Returns the result of a given phi instruction. '''
 
+        assert isinstance(instruction, W_PhiInstruction)
         for i in range(instruction.count_incoming):
-            l_block = instruction.incoming_block[i]
-            block = function.get_block(l_block)
-            if block == self.last_block:
+            w_block = instruction.incoming_block[i]
+            if w_block == self.last_block:
                 return self.lookup_var(instruction.incoming_value[i])
 
-    def get_switch_block(self, function, args):
+    def get_switch_block(self, instruction, args):
         ''' Returns the block a switch instruction branches to. '''
 
+        assert isinstance(instruction, W_SwitchInstruction)
         cond = self.lookup_var(args[0])
-        default_branch = args[1]
         assert isinstance(cond, Integer)
         for i in range(2, len(args), 2):
             switch_var = self.lookup_var(args[i])
             assert isinstance(switch_var, Integer)
             if cond.value == switch_var.value:
-                return BasicBlock(function.get_block(args[i + 1]))
-        return BasicBlock(function.get_block(default_branch))
+                return BasicBlock(instruction.w_blocks[i / 2  - 1])
+        return BasicBlock(instruction.default_branch)
 
     def set_var(self, var, new_value):
-        ''' Changes the value of an existing variable. '''
+        ''' Changes the value of an existing variable to the one specified. '''
 
         assert isinstance(new_value, Value)
         addr = rffi.cast(rffi.INT, var)
@@ -134,9 +141,10 @@ class Interpreter(object):
         else:
             self.exit_not_implemented("Unknown ICmp predicate %d" % predicate)
 
+    @jit.unroll_safe
     def exec_operation(self, function, instruction):
         opcode = instruction.opcode
-        args = instruction.l_operands
+        args = instruction.operands
         if opcode == llwrap.LLVMRet:
             if len(args) == 0:
                 return NoValue()
@@ -195,16 +203,17 @@ class Interpreter(object):
             assert isinstance(x, Integer) and isinstance(y, Integer)
             return Integer(int(x.value) << int(y.value))
         elif opcode == llwrap.LLVMCall:
-            if self.module.has_function(args[-1]):
+            assert isinstance(instruction, W_CallInstruction)
+            if self.module.has_function(args[-1].l_value):
                 for index in range(instruction.func_param_count):
                     param = instruction.l_func_params[index]
-                    self.global_state.set_variable(rffi.cast(rffi.INT, param),\
+                    self.global_state.set_variable(param.addr,\
                                                    self.lookup_var(args[index]))
-                interp_fun = Interpreter(self.module, self.global_state, self.constants)
-                func = self.module.get_function(args[-1])
+                interp_fun = Interpreter(self.module, self.global_state)
+                func = self.module.get_function(args[-1].l_value)
                 return interp_fun.run(func)
             else:
-                string_format_ref = instruction.l_string_format_ref
+                string_format_ref = instruction.string_format_ref
                 str_var = self.lookup_var(string_format_ref)
                 assert isinstance(str_var, String)
                 string_format = str_var.value
@@ -212,8 +221,7 @@ class Interpreter(object):
                 if fn_name == "printf" or fn_name == "puts":
                     printf_args = []
                     for i in range(1, len(args) - 1):
-                        arg = args[i]
-                        var = self.lookup_var(arg)
+                        var = self.lookup_var(args[i])
                         printf_args.append(var)
                     self.puts(string_format, printf_args)
                 else:
@@ -223,7 +231,7 @@ class Interpreter(object):
         elif opcode == llwrap.LLVMStore:
             # store arg[0] in arg[1]
             var = self.lookup_var(args[0])
-            self.set_var(args[1], var)
+            self.set_var(args[1].l_value, var)
         elif opcode == llwrap.LLVMLoad:
             return self.lookup_var(args[0])
         elif opcode == llwrap.LLVMFPExt:
@@ -249,18 +257,21 @@ class Interpreter(object):
             # if the jump is conditional, it's necessary to find
             # the block to jump to
             if instruction.is_conditional():
+                assert isinstance(instruction, W_ConditionalInstruction)
                 cond = self.lookup_var(instruction.condition)
                 assert isinstance(cond, Integer)
                 if cond.value == True:
-                    return BasicBlock(function.get_block(instruction.l_bb_true))
+                    return BasicBlock(instruction.w_bb_true)
                 else:
-                    return BasicBlock(function.get_block(instruction.l_bb_false))
+                    return BasicBlock(instruction.w_bb_false)
             else:
                 # unconditional jump
-                return BasicBlock(function.get_block(instruction.l_bb_uncond))
+                assert isinstance(instruction, W_BrInstruction)
+                return BasicBlock(instruction.w_bb_uncond)
         elif opcode == llwrap.LLVMICmp:
             val1 = self.lookup_var(args[0])
             val2 = self.lookup_var(args[1])
+            assert isinstance(instruction, W_ICmpInstruction)
             predicate = instruction.icmp_predicate
             return self.eval_condition(predicate, val1, val2)
         elif opcode == llwrap.LLVMPHI:
@@ -273,7 +284,7 @@ class Interpreter(object):
             else:
                 return self.lookup_var(args[2])
         elif opcode == llwrap.LLVMSwitch:
-            return self.get_switch_block(function, args)
+            return self.get_switch_block(instruction, args)
         else:
             self.exit_not_implemented("Unknown opcode %d" % opcode)
         return NoValue()
@@ -287,6 +298,7 @@ class Interpreter(object):
             instruction = block.get_first_instruction()
             next_block = block.w_next_block
             while instruction:
+                self.current_instruction = instruction
                 result = self.exec_operation(function, instruction)
                 if isinstance(result, BasicBlock):
                     next_block = result.value
@@ -334,9 +346,10 @@ def main(args):
     main_argv = args[1:]
     global_state = State()
     module.load_globals(global_state, main_argc, main_argv)
-    interp = Interpreter(module, global_state, module.constants)
+    interp = Interpreter(module, global_state)
     interp.run(module.w_main_fun)
     return 0
 
 if __name__ == '__main__':
    main(sys.argv)
+

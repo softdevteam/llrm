@@ -35,6 +35,5 @@ class BaseBytecodeTest(interpreter.Interpreter):
         (module, global_state) = self.setup_interp("temp.bc", argc, argv)
         self.module = module
         self.global_state = global_state
-        self.constants = module.constants
         self.run(module.w_main_fun)
         return self.output
