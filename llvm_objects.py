@@ -1,9 +1,13 @@
 from rpython.rlib import jit
 from state import State
-from type_wrapper import Integer, Float, List, String
+from type_wrapper import String, Integer, Float, Ptr, Value, List, NoValue,\
+                         BasicBlock
 from rpython.rtyper.lltypesystem import rffi, lltype
-
 import llvm_wrapper as llwrap
+import interpreter
+
+class MissingPredecessorBasicBlockException(Exception):
+    pass
 
 class W_Module(object):
     ''' Represents a wrapper for an LLVMModuleRef. '''
@@ -119,12 +123,12 @@ class W_Function(object):
             instruction = block.get_first_instruction()
             while instruction:
                 if isinstance(instruction, W_PhiInstruction):
-                    incoming_block = []
+                    incoming_blocks = []
                     for i in range(instruction.count_incoming):
                         l_block = llwrap.LLVMGetIncomingBlock(instruction.l_instr, i)
                         w_block = self.get_block(l_block)
-                        incoming_block.append(w_block)
-                    instruction.incoming_block = incoming_block[:]
+                        incoming_blocks.append(w_block)
+                    instruction.incoming_blocks = incoming_blocks[:]
                 elif isinstance(instruction, W_BrInstruction):
                     l_block = llwrap.LLVMValueAsBasicBlock(instruction.operands[0].l_value)
                     instruction.w_bb_uncond = self.get_block(l_block)
@@ -244,27 +248,47 @@ class W_BaseInstruction(object):
             args.append(_get_variable_wrapper(arg))
         return args
 
+class W_RetInstruction(W_BaseInstruction):
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        if len(self.operands) == 0:
+            return NoValue()
+        else:
+            return args[0]
+
 class W_BrInstruction(W_BaseInstruction):
-    ''' Represents a wrapper for an LLVMValueRef that is a br instruction. '''
+    ''' Represents a wrapper for an LLVMValueRef that is a 'br' instruction. '''
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
         self.w_bb_uncond = None
 
+    def execute(self, args):
+        return BasicBlock(self.w_bb_uncond)
+
 class W_ConditionalInstruction(W_BaseInstruction):
     ''' Represents a wrapper for an LLVMValueRef that is a conditional
-        br instruction. '''
+        'br' instruction. '''
 
     _immutable_fields_ = ['condition', 'w_bb_true', 'w_bb_false']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
         self.condition = _get_variable_wrapper(llwrap.LLVMGetCondition(l_instr))
-        self.l_bb_true = llwrap.LLVMValueAsBasicBlock(self.operands[2].l_value)
-        self.l_bb_false = llwrap.LLVMValueAsBasicBlock(self.operands[1].l_value)
+
+    def execute(self, args):
+        condition_var = args[0]
+        assert isinstance(condition_var, Integer)
+        if condition_var.value == True:
+            return BasicBlock(self.w_bb_true)
+        else:
+            return BasicBlock(self.w_bb_false)
 
 class W_ICmpInstruction(W_BaseInstruction):
-    ''' Represents a wrapper for an LLVMValueRef that is an icmp
+    ''' Represents a wrapper for an LLVMValueRef that is an 'icmp'
         instruction. '''
 
     _immutable_fields_ = ['icmp_predicate']
@@ -273,26 +297,61 @@ class W_ICmpInstruction(W_BaseInstruction):
         W_BaseInstruction.__init__(self, l_instr, w_module)
         self.icmp_predicate = llwrap.LLVMGetICmpPredicate(l_instr)
 
+    def eval_condition(self, val1, val2):
+        ''' Returns the wrapped boolean result of the comparison of the values of
+            the two arguments, according to an ICmp predicate. '''
+
+        assert isinstance(val1, Integer) and isinstance(val2, Integer)
+        if self.icmp_predicate == llwrap.LLVMIntSLT:
+            return Integer(val1.value < val2.value)
+        elif self.icmp_predicate == llwrap.LLVMIntSLE:
+            return Integer(val1.value <= val2.value)
+        elif self.icmp_predicate == llwrap.LLVMIntEQ:
+            return Integer(val1.value == val2.value)
+        elif self.icmp_predicate == llwrap.LLVMIntNE:
+            return Integer(val1.value != val2.value)
+        elif self.icmp_predicate == llwrap.LLVMIntSGT:
+            return Integer(val1.value > val2.value)
+        elif self.icmp_predicate == llwrap.LLVMIntSGE:
+            return Integer(val1.value >= val2.value)
+        else:
+            interpreter.exit_not_implemented("Unknown ICmp predicate %d" %\
+                                             self.icmp_predicate)
+
+    def execute(self, args):
+        return self.eval_condition(args[0], args[1])
+
 class W_PhiInstruction(W_BaseInstruction):
-    ''' Represents a wrapper for an LLVMValueRef that is a phi
+    ''' Represents a wrapper for an LLVMValueRef that is a 'phi'
         instruction. '''
 
-    _immutable_fields_ = ['l_instr', 'count_incoming', 'incoming_block[*]',
+    _immutable_fields_ = ['l_instr', 'count_incoming', 'incoming_blocks[*]',
                           'incoming_value[*]']
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
         self.l_instr = l_instr
         self.count_incoming = llwrap.LLVMCountIncoming(l_instr)
-        self.incoming_block = None
+        self.incoming_blocks = None
         incoming_value = []
         for i in range(self.count_incoming):
             wrapped_var = _get_variable_wrapper(llwrap.LLVMGetIncomingValue(l_instr, i))
             incoming_value.append(wrapped_var)
-        self.incoming_value =  incoming_value[:]
+        self.incoming_value = incoming_value[:]
+
+    @jit.unroll_safe
+    def execute(self, args):
+        ''' Returns the result of a given phi instruction. '''
+
+        from interpreter import Interpreter
+        for i in range(self.count_incoming):
+            w_block = self.incoming_blocks[i]
+            if w_block == Interpreter.interp_state.last_block:
+                return Interpreter.interp_state.lookup_var(self.incoming_value[i])
+        raise MissingPredecessorBasicBlockException(self.name)
 
 class W_CallInstruction(W_BaseInstruction):
-    ''' Represents a wrapper for an LLVMValueRef that is a call
+    ''' Represents a wrapper for an LLVMValueRef that is a 'call'
         instruction. '''
 
     _immutable_fields_ = ['func_param_count', 'string_format_ref']
@@ -311,17 +370,322 @@ class W_CallInstruction(W_BaseInstruction):
             self.string_format_ref = _get_variable_wrapper(llwrap.LLVMGetOperand(self.operands[0].l_value, 0))
             self.func_name = rffi.charp2str(llwrap.LLVMGetValueName(self.operands[-1].l_value))
 
+    def execute(self, args):
+        from interpreter import Interpreter
+        if Interpreter.interp_state.module.has_function(self.operands[-1].l_value):
+            # the function is defined in the file being interpreted
+            for index in range(self.func_param_count):
+                param = self.l_func_params[index]
+                variable = Interpreter.interp_state.lookup_var(self.operands[index])
+                # XXX function parameters are global variables
+                Interpreter.interp_state.global_state.set_variable(param.addr, variable)
+            func = Interpreter.interp_state.module.get_function(self.operands[-1].l_value)
+            interp_fun = Interpreter(Interpreter.interp_state.module,\
+                                     Interpreter.interp_state.global_state)
+            result = interp_fun.run(func)
+            return result
+        else:
+            # the function is not defined in the file being interpreted
+            # XXX currently assuming it is printf or puts
+            str_var = Interpreter.interp_state.lookup_var(self.string_format_ref)
+            assert isinstance(str_var, String)
+            string_format = str_var.value
+            if self.func_name == "printf" or self.func_name == "puts":
+                printf_args = []
+                for i in range(1, len(self.operands) - 1):
+                    var = Interpreter.interp_state.lookup_var(self.operands[i])
+                    printf_args.append(var)
+                interpreter.puts(string_format, printf_args)
+            else:
+                interpreter.exit_not_implemented(self.func_name)
+        return NoValue()
+
 class W_SwitchInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is a 'switch'
+        instruction. '''
 
     def __init__(self, l_instr, w_module):
         W_BaseInstruction.__init__(self, l_instr, w_module)
         self.default_branch = None
         self.w_blocks = None
 
+    def get_switch_block(self, args):
+        ''' Returns the block a switch instruction branches to. '''
+
+        cond = args[0]
+        assert isinstance(cond, Integer)
+        for i in range(2, len(args), 2):
+            switch_var = args[i]
+            assert isinstance(switch_var, Integer)
+            if cond.value == switch_var.value:
+                return BasicBlock(self.w_blocks[i / 2  - 1])
+        return BasicBlock(self.default_branch)
+
+    def execute(self, args):
+        return self.get_switch_block(args)
+
+class W_SelectInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is a 'select'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        cond = args[0]
+        assert isinstance(cond, Integer)
+        if cond.value:
+            return args[1]
+        else:
+            return args[2]
+
+class W_AddInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'add'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Integer) and isinstance(y, Integer)
+        return Integer(x.value + y.value)
+
+class W_FAddInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'fadd'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Float) and isinstance(y, Float)
+        return Float(x.value + y.value)
+
+class W_MulInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is a 'mul'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Integer) and isinstance(y, Integer)
+        return Integer(x.value * y.value)
+
+class W_FMulInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'fmul'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Float) and isinstance(y, Float)
+        return Float(x.value * y.value)
+
+class W_SubInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is a 'sub'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Integer) and isinstance(y, Integer)
+        return Integer(x.value - y.value)
+
+class W_FSubInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'fsub'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Float) and isinstance(y, Float)
+        return Float(x.value - y.value)
+
+class W_SDivInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'sdiv'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Integer) and isinstance(y, Integer)
+        return Integer(x.value / y.value)
+
+class W_FDivInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'fdiv'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Float) and isinstance(y, Float)
+        return Float(x.value / y.value)
+
+class W_SRemInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'srem'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Integer) and isinstance(y, Integer)
+        return Integer(int(x.value) % int(y.value))
+
+class W_AndInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'and'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Integer) and isinstance(y, Integer)
+        return Integer(int(x.value) & int(y.value))
+
+class W_OrInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'or'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Integer) and isinstance(y, Integer)
+        return Integer(int(x.value) | int(y.value))
+
+class W_XorInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'xor'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Integer) and isinstance(y, Integer)
+        return Integer(int(x.value) ^ int(y.value))
+
+class W_ShlInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'shl'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x, y = args
+        assert isinstance(x, Integer) and isinstance(y, Integer)
+        return Integer(int(x.value) << int(y.value))
+
+class W_AllocaInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'alloca'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        return Ptr(lltype.scoped_alloc(rffi.VOIDP.TO, 1))
+
+class W_LoadInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is a 'load'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        return args[0]
+
+class W_FPExtInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'fpext'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        # extend a floating point value (eg float -> double)
+        x = args[0]
+        assert isinstance(x, Float)
+        return Float(x.value)
+
+
+class W_FPTruncInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is an 'fptrunc'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        # truncate a floating point value (double -> float)
+        x = args[0]
+        assert isinstance(x, Float)
+        return Float(x.value)
+
+class W_ZExtInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is a 'zext'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        x = args[0]
+        assert isinstance(x, Integer)
+        return Integer(x.value)
+
+class W_SIToFPInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is a 'sitofp'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        # convert Signed to Floating Point
+        x = args[0]
+        assert isinstance(x, Integer)
+        return Float(float(x.value))
+
+class W_StoreInstruction(W_BaseInstruction):
+    ''' Represents a wrapper for an LLVMValueRef that is a 'sitofp'
+        instruction. '''
+
+    def __init__(self, l_instr, w_module):
+        W_BaseInstruction.__init__(self, l_instr, w_module)
+
+    def execute(self, args):
+        from interpreter import Interpreter
+        var = Interpreter.interp_state.lookup_var(self.operands[0])
+        Interpreter.interp_state.set_var(self.operands[1].l_value, var)
+        return NoValue()
+
 def _get_instruction(opcode, l_instruction, w_module):
     ''' Returns the appropriate wrapper for the specified instruction. '''
 
-    if opcode == llwrap.LLVMBr:
+    if opcode == llwrap.LLVMRet:
+        return W_RetInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMBr:
         if llwrap.LLVMIsConditional(l_instruction):
             return W_ConditionalInstruction(l_instruction, w_module)
         else:
@@ -334,8 +698,49 @@ def _get_instruction(opcode, l_instruction, w_module):
         return W_CallInstruction(l_instruction, w_module)
     elif opcode == llwrap.LLVMSwitch:
         return W_SwitchInstruction(l_instruction, w_module)
-    else:
-        return W_BaseInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMSelect:
+        return W_SelectInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMAdd:
+        return W_AddInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMFAdd:
+        return W_FAddInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMMul:
+        return W_MulInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMFMul:
+        return W_FMulInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMSub:
+        return W_SubInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMFSub:
+        return W_FSubInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMSDiv:
+        return W_SDivInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMFDiv:
+        return W_FDivInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMSRem:
+        return W_SRemInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMAnd:
+        return W_AndInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMOr:
+        return W_OrInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMXor:
+        return W_XorInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMShl:
+        return W_ShlInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMAlloca:
+        return W_AllocaInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMLoad:
+        return W_LoadInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMFPExt:
+        return W_FPExtInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMZExt:
+        return W_ZExtInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMFPTrunc:
+        return W_FPTruncInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMSIToFP:
+        return W_SIToFPInstruction(l_instruction, w_module)
+    elif opcode == llwrap.LLVMStore:
+        return W_StoreInstruction(l_instruction, w_module)
+    return W_BaseInstruction(l_instruction, w_module)
 
 class Variable(object):
 
@@ -356,6 +761,7 @@ class GlobalVariable(Variable):
         self.content = content
 
 class Constant(Variable):
+    ''' Represents a variable that is an LLVM constant. '''
 
     def __init__(self, content, l_value):
         Variable.__init__(self, l_value)
