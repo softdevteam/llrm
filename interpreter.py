@@ -99,6 +99,10 @@ class InterpreterState(object):
             error_str = rffi.charp2str(llwrap.LLVMPrintValueToString(var))
             raise NoSuchVariableException(error_str)
 
+# the print function to use - can be changed to some other function
+# for testing purposes (to supress and save the output)
+print_function = puts
+
 class Interpreter(object):
 
     interp_state = InterpreterState()

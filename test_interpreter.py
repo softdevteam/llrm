@@ -430,7 +430,6 @@ attributes #1 = { nounwind "disable-tail-calls"="false" "less-precise-fpmad"="fa
 !0 = !{!"clang version 3.8.0 (tags/RELEASE_380/final)"}
 """)
 #################################################################
-
 #include <stdio.h>
 #
 #int main(int argc, char *argv[])
@@ -455,7 +454,6 @@ attributes #1 = { nounwind "disable-tail-calls"="false" "less-precise-fpmad"="fa
 #    }
 #    return 0;
 #}
-
     correct_result = []
     for i in range(0, 13):
         if i % 4 == 0:
@@ -475,7 +473,6 @@ def test_phi02():
     argc = 1
     argv = ["temp.bc"]
     result = interp.run_bytecode(argc, argv, r"""
-
 @.str = private unnamed_addr constant [7 x i8] c"%d %d\0A\00", align 1
 
 define i32 @main(i32 %argc, i8** %argv) {
@@ -508,8 +505,95 @@ if.end:
 }
 
 declare i32 @printf(i8*, ...)
-
 """)
     assert result[0] == "%d %d\n"
     assert result[1] == "2"
     assert result[2] == "6"
+
+def test_switch01():
+    interp = BaseBytecodeTest()
+    argc = 1
+    argv = ["temp.bc"]
+    result = interp.run_bytecode(argc, argv, r"""
+@.str = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
+
+define i32 @main(i32 %argc, i8** %argv) {
+entry:
+  %cond.addr = alloca i32, align 4
+  %x.addr = alloca i32, align 4
+
+  store i32 1, i32* %cond.addr, align 4
+  store i32 5, i32* %x.addr, align 4
+
+  %cond = load i32, i32* %cond.addr, align 4
+  %x = load i32, i32* %x.addr, align 4
+
+switch i32 %cond, label %true [ i32 0, label %false ]
+
+true:
+  %x0 = add nsw i32 %x, 1
+  br label %end
+
+false:
+  %x1 = add nsw i32 %x, 2
+  br label %end
+
+end:
+  %x2 = phi i32 [ %x0, %true ], [ %x1, %false ]
+  %call = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str, i64 0, i64 0), i32 %x2)
+  ret i32 0
+}
+
+declare i32 @printf(i8*, ...)
+""")
+    assert result[1] == '6'
+
+def test_switch02():
+    interp = BaseBytecodeTest()
+    argc = 1
+    argv = ["temp.bc"]
+    result = interp.run_bytecode(argc, argv, r"""
+@.str = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
+
+define i32 @main(i32 %argc, i8** %argv) {
+entry:
+  %x.addr = alloca i32, align 4
+  store i32 5, i32* %x.addr, align 4
+  %x = load i32, i32* %x.addr, align 4
+  switch i32 0, label %true [ i32 0, label %false ]
+true:
+  %x0 = add nsw i32 %x, 1
+  br label %end
+false:
+  %x1 = add nsw i32 %x, 2
+  br label %end
+end:
+  %x2 = phi i32 [ %x0, %true ], [ %x1, %false ]
+  %call = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str, i64 0, i64 0), i32 %x2)
+  ret i32 0
+}
+
+declare i32 @printf(i8*, ...)
+""")
+    assert result[1] == '7'
+
+def test_select():
+    interp = BaseBytecodeTest()
+    argc = 1
+    argv = ["temp.bc"]
+    result = interp.run_bytecode(argc, argv, r"""
+@.str = private unnamed_addr constant [7 x i8] c"%d %d\0A\00", align 1
+
+define i32 @main(i32 %argc, i8** %argv) {
+entry:
+  %result.true = select i1 true, i32 25, i32 30
+  %result.false = select i1 false, i32 25, i32 30
+  %call = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([7 x i8], [7 x i8]* @.str, i64 0, i64 0), i32 %result.true, i32 %result.false)
+  ret i32 0
+}
+
+declare i32 @printf(i8*, ...)
+
+""")
+    assert result[1] == '25'
+    assert result[2] == '30'

@@ -1,5 +1,4 @@
 from rpython.rlib import jit
-from state import State
 from type_wrapper import String, Integer, Float, Ptr, Value, List, NoValue,\
                          BasicBlock
 from rpython.rtyper.lltypesystem import rffi, lltype
@@ -395,7 +394,7 @@ class W_CallInstruction(W_BaseInstruction):
                 for i in range(1, len(self.operands) - 1):
                     var = Interpreter.interp_state.lookup_var(self.operands[i])
                     printf_args.append(var)
-                interpreter.puts(string_format, printf_args)
+                interpreter.print_function(string_format, printf_args)
             else:
                 interpreter.exit_not_implemented(self.func_name)
         return NoValue()
