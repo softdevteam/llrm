@@ -1,8 +1,7 @@
 from state import State
-from type_wrapper import Integer, List, String, NumericValue
+from type_wrapper import NumericValue
 
 import interpreter
-import sys
 import subprocess
 
 class BaseBytecodeTest(interpreter.Interpreter):

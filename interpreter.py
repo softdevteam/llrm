@@ -1,11 +1,7 @@
 from __future__ import with_statement
 from rpython.rlib import jit
-from type_wrapper import String, Integer, Ptr, Value, NoValue,\
-                         NumericValue, BasicBlock
-from llvm_objects import W_Module, W_BrInstruction, W_PhiInstruction,\
-                         W_CallInstruction, W_ConditionalInstruction,\
-                         W_SwitchInstruction
-from state import State
+from type_wrapper import NoValue, NumericValue, BasicBlock
+from state import State, InterpreterState
 from rpython.rtyper.lltypesystem import rffi, lltype
 
 import llvm_wrapper as llwrap
@@ -25,9 +21,6 @@ def get_printable_location(interpreter, block, function):
 jit_driver = jit.JitDriver(greens=["self", "block", "function"],
                            reds=[],
                            get_printable_location=get_printable_location)
-
-class NoSuchVariableException(Exception):
-    pass
 
 class InvalidFileException(Exception):
     pass
@@ -49,55 +42,6 @@ def puts(string, args=[]):
             assert isinstance(arg, NumericValue)
             print arg.value
         print "\n\n"
-
-class InterpreterState(object):
-
-    def __init__(self, module=None, frame=None, global_state=None, last_block=None):
-        self.module = module
-        self.current_frame = frame
-        self.global_state = global_state
-        self.last_block = last_block
-
-    def update(self, module=None, frame=None, global_state=None, last_block=None):
-        if module:
-            self.module = module
-        if frame:
-            self.current_frame = frame
-        if global_state:
-            self.global_state = global_state
-        if last_block:
-            self.last_block = last_block
-
-    def lookup_var(self, var, ignore_err=False):
-        ''' Returns the value of a variable. First checks if the Variable
-            is a Constant; if it is not an LLVM constant, the
-            local variable dictionary is checked, followed by the global
-            variable dictionary. '''
-
-        if isinstance(var, llvm_objects.Constant):
-            return var.content
-        elif self.current_frame.has_key(var.addr):
-            return self.current_frame.get_variable(var.addr)
-        elif self.global_state.has_key(var.addr):
-            return self.global_state.get_variable(var.addr)
-        elif not ignore_err:
-            print "[ERROR]: Unknown variable. Exiting."
-            error_str = rffi.charp2str(llwrap.LLVMPrintValueToString(var.l_value))
-            raise NoSuchVariableException(error_str)
-
-    def set_var(self, var, new_value):
-        ''' Changes the value of an existing variable to the one specified. '''
-
-        assert isinstance(new_value, Value)
-        addr = rffi.cast(rffi.INT, var)
-        if self.current_frame.has_key(addr):
-            self.current_frame.set_variable(addr, new_value)
-        elif self.global_state.has_key(addr):
-            self.global_state.set_variable(addr, new_value)
-        else:
-            print "[ERROR]: Unknown variable. Exiting."
-            error_str = rffi.charp2str(llwrap.LLVMPrintValueToString(var))
-            raise NoSuchVariableException(error_str)
 
 # the print function to use - can be changed to some other function
 # for testing purposes (to supress and save the output)
@@ -176,7 +120,7 @@ def create_module(filename):
                                                                rffi.charp2str(out_message[0]))
                     raise UnparsableBitcodeException(filename)
                 module = module_ptr[0]
-    return W_Module(module)
+    return llvm_objects.W_Module(module)
 
 def main(args):
     if len(args) < 2:
