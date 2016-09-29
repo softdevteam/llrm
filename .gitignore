@@ -1,4 +1,9 @@
 *.swp
 llvmtest
 *.o
-test.bc
+*.bc
+*.ll
+*.pyc
+*.swo
+*.out
+

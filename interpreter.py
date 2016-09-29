@@ -1,11 +1,11 @@
 from __future__ import with_statement
 from rpython.rlib import jit
 from type_wrapper import NoValue, NumericValue, BasicBlock
-from state import State, InterpreterState
 from rpython.rtyper.lltypesystem import rffi, lltype
+from state import InterpreterState, Frame
+from llvm_objects import W_Module
 
 import llvm_wrapper as llwrap
-import llvm_objects
 import sys
 
 def target(*args):
@@ -51,12 +51,14 @@ class Interpreter(object):
 
     interp_state = InterpreterState()
 
-    def __init__(self, module, global_state):
+    def __init__(self, module, global_frame, frame):
         self.module = module
-        self.global_state = global_state
+        self.global_frame = global_frame
         self.current_instruction = None
+        self.frame = frame
         Interpreter.interp_state.update(module=self.module,\
-                                        global_state=self.global_state)
+                                        global_frame=self.global_frame,
+                                        frame=self.frame)
 
     @jit.unroll_safe
     def _get_args(self, args):
@@ -72,7 +74,8 @@ class Interpreter(object):
         ''' Runs each instruction of the given function and creates
             a new stack frame for the local variables. '''
 
-        self.frame = State()
+        # call instructions set up the next stack frame for the interpreter
+        # initially, each stack frame contains the function arguments
         block = function.get_first_block()
         Interpreter.interp_state.update(frame=self.frame, last_block=block)
         while block:
@@ -120,7 +123,7 @@ def create_module(filename):
                                                                rffi.charp2str(out_message[0]))
                     raise UnparsableBitcodeException(filename)
                 module = module_ptr[0]
-    return llvm_objects.W_Module(module)
+    return W_Module(module)
 
 def main(args):
     if len(args) < 2:
@@ -129,9 +132,10 @@ def main(args):
     module = create_module(args[1])
     main_argc = len(args) - 1
     main_argv = args[1:]
-    global_state = State()
-    module.load_globals(global_state, main_argc, main_argv)
-    interp = Interpreter(module, global_state)
+    global_frame = Frame()
+    module.load_globals(global_frame)
+    module.load_main(main_argc, main_argv)
+    interp = Interpreter(module, global_frame, InterpreterState.main_frame)
     interp.run(module.w_main_fun)
     return 0
 
