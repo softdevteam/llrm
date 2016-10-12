@@ -1,7 +1,8 @@
 from rpython.rlib import jit
+from rpython.rtyper.lltypesystem import rffi, lltype
 from type_wrapper import String, Integer, Float, Ptr, Value, List, NoValue,\
                          BasicBlock
-from rpython.rtyper.lltypesystem import rffi, lltype
+
 import llvm_wrapper as llwrap
 import interpreter
 
@@ -60,33 +61,34 @@ class W_Module(object):
         offset = self.function_offsets.get(addr, -1)
         return offset != -1
 
-    def load_globals(self, global_state, main_argc, main_argv):
-        ''' Loads the global variables into a given State object and sets
+    def load_globals(self, global_frame):
+        ''' Loads the global variables into a given Frame object and sets
             argc and argv. '''
 
         l_global_var = llwrap.LLVMGetFirstGlobal(self.l_module)
-        l_main_fun = llwrap.LLVMGetNamedFunction(self.l_module, "main")
         while l_global_var:
             l_initializer = llwrap.LLVMGetInitializer(l_global_var)
             addr = rffi.cast(rffi.INT, l_global_var)
             if llwrap.LLVMIsConstantString(l_initializer):
                 with lltype.scoped_alloc(rffi.INTP.TO, 1) as int_ptr:
                     l_string_var = llwrap.LLVMGetAsString(l_initializer, int_ptr)
-                    global_state.set_variable(rffi.cast(rffi.INT, l_global_var),\
+                    global_frame.set_variable(rffi.cast(rffi.INT, l_global_var),\
                                               String(rffi.charp2str(l_string_var)))
             else:
                 print "[ERROR]: Unknown type. Exiting."
                 raise TypeError(rffi.charp2str(llwrap.LLVMPrintValueToString(l_initializer)))
             l_global_var = llwrap.LLVMGetNextGlobal(l_global_var)
-        # setting argc and argv of the C program - currently global vars
+
+    def load_main(self, argc, argv):
+        from state import InterpreterState
+        main_frame = InterpreterState.main_frame
+        l_main_fun = llwrap.LLVMGetNamedFunction(self.l_module, "main")
         for index in range(llwrap.LLVMCountParams(l_main_fun)):
             l_param = llwrap.LLVMGetParam(l_main_fun, index)
             if index == 0:
-                global_state.set_variable(rffi.cast(rffi.INT, l_param),\
-                                                    Integer(main_argc))
+                main_frame.set_variable(rffi.cast(rffi.INT, l_param), Integer(argc))
             else:
-                global_state.set_variable(rffi.cast(rffi.INT, l_param),\
-                                                    List(main_argv))
+                main_frame.set_variable(rffi.cast(rffi.INT, l_param), List(argv))
 
 class W_Function(object):
     ''' Represents a wrapper for an LLVMValueRef that is a function. '''
@@ -342,11 +344,10 @@ class W_PhiInstruction(W_BaseInstruction):
     def execute(self, args):
         ''' Returns the result of a given phi instruction. '''
 
-        from interpreter import Interpreter
         for i in range(self.count_incoming):
             w_block = self.incoming_blocks[i]
-            if w_block == Interpreter.interp_state.last_block:
-                return Interpreter.interp_state.lookup_var(self.incoming_value[i])
+            if w_block == interpreter.Interpreter.interp_state.last_block:
+                return interpreter.Interpreter.interp_state.lookup_var(self.incoming_value[i])
         raise MissingPredecessorBasicBlockException(self.name)
 
 class W_CallInstruction(W_BaseInstruction):
@@ -370,29 +371,31 @@ class W_CallInstruction(W_BaseInstruction):
             self.func_name = rffi.charp2str(llwrap.LLVMGetValueName(self.operands[-1].l_value))
 
     def execute(self, args):
-        from interpreter import Interpreter
-        if Interpreter.interp_state.module.has_function(self.operands[-1].l_value):
+        interp_state = interpreter.Interpreter.interp_state
+        if interp_state.module.has_function(self.operands[-1].l_value):
             # the function is defined in the file being interpreted
+            from state import Frame
+            frame = Frame()
             for index in range(self.func_param_count):
                 param = self.l_func_params[index]
-                variable = Interpreter.interp_state.lookup_var(self.operands[index])
-                # XXX function parameters are global variables
-                Interpreter.interp_state.global_state.set_variable(param.addr, variable)
-            func = Interpreter.interp_state.module.get_function(self.operands[-1].l_value)
-            interp_fun = Interpreter(Interpreter.interp_state.module,\
-                                     Interpreter.interp_state.global_state)
+                variable = interp_state.lookup_var(self.operands[index])
+                frame.set_variable(param.addr, variable)
+            func = interp_state.module.get_function(self.operands[-1].l_value)
+            interp_fun = interpreter.Interpreter(module=interp_state.module,\
+                                                 global_frame=interp_state.global_frame,\
+                                                 frame=frame)
             result = interp_fun.run(func)
             return result
         else:
             # the function is not defined in the file being interpreted
             # XXX currently assuming it is printf or puts
-            str_var = Interpreter.interp_state.lookup_var(self.string_format_ref)
+            str_var = interp_state.lookup_var(self.string_format_ref)
             assert isinstance(str_var, String)
             string_format = str_var.value
             if self.func_name == "printf" or self.func_name == "puts":
                 printf_args = []
                 for i in range(1, len(self.operands) - 1):
-                    var = Interpreter.interp_state.lookup_var(self.operands[i])
+                    var = interp_state.lookup_var(self.operands[i])
                     printf_args.append(var)
                 interpreter.print_function(string_format, printf_args)
             else:
@@ -674,9 +677,8 @@ class W_StoreInstruction(W_BaseInstruction):
         W_BaseInstruction.__init__(self, l_instr, w_module)
 
     def execute(self, args):
-        from interpreter import Interpreter
-        var = Interpreter.interp_state.lookup_var(self.operands[0])
-        Interpreter.interp_state.set_var(self.operands[1].l_value, var)
+        var = interpreter.Interpreter.interp_state.lookup_var(self.operands[0])
+        interpreter.Interpreter.interp_state.set_var(self.operands[1].l_value, var)
         return NoValue()
 
 def _get_instruction(opcode, l_instruction, w_module):
